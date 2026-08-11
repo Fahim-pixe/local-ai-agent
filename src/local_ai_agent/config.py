@@ -29,6 +29,18 @@ def _env_float(name: str, default: float) -> float:
     return float(value) if value is not None else default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value.")
+
+
 def _read_config(path: Path) -> dict[str, Any]:
     with path.open("rb") as config_file:
         return tomllib.load(config_file)
@@ -53,10 +65,15 @@ class Settings:
     context_reserve_tokens: int
     recent_tool_results: int
     recent_conversation_messages: int
+    docker_binary: str
     docker_sandbox_image: str
     docker_sandbox_network: str
     docker_sandbox_memory: str
     docker_sandbox_cpus: float
+    docker_sandbox_pids_limit: int
+    docker_sandbox_user: str
+    docker_sandbox_tmpfs_size: str
+    docker_sandbox_read_only_root: bool
 
     @property
     def workspace_project_path(self) -> Path:
@@ -119,10 +136,17 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
         recent_conversation_messages=_env_int(
             "RECENT_CONVERSATION", context["recent_conversation_messages"]
         ),
+        docker_binary=os.getenv("DOCKER_BINARY", sandbox["docker_binary"]),
         docker_sandbox_image=os.getenv("DOCKER_SANDBOX_IMAGE", sandbox["image"]),
         docker_sandbox_network=os.getenv("DOCKER_SANDBOX_NETWORK", sandbox["network"]),
         docker_sandbox_memory=os.getenv("DOCKER_SANDBOX_MEMORY", sandbox["memory"]),
         docker_sandbox_cpus=_env_float("DOCKER_SANDBOX_CPUS", sandbox["cpus"]),
+        docker_sandbox_pids_limit=_env_int("DOCKER_SANDBOX_PIDS_LIMIT", sandbox["pids_limit"]),
+        docker_sandbox_user=os.getenv("DOCKER_SANDBOX_USER", sandbox["user"]),
+        docker_sandbox_tmpfs_size=os.getenv("DOCKER_SANDBOX_TMPFS_SIZE", sandbox["tmpfs_size"]),
+        docker_sandbox_read_only_root=_env_bool(
+            "DOCKER_SANDBOX_READ_ONLY_ROOT", sandbox["read_only_root"]
+        ),
     )
 
 

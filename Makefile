@@ -1,7 +1,7 @@
 PYTHON ?= python3.12
 VENV ?= .venv
 
-.PHONY: setup bootstrap test lint format run health sandbox-image compose-up compose-down
+.PHONY: setup bootstrap test test-docker lint format run health sandbox-image compose-up compose-down
 
 setup:
 	$(PYTHON) -m venv $(VENV)
@@ -14,6 +14,9 @@ bootstrap:
 
 test:
 	$(VENV)/bin/pytest
+
+test-docker:
+	RUN_DOCKER_INTEGRATION=1 $(VENV)/bin/pytest -m docker
 
 lint:
 	$(VENV)/bin/ruff check src tests

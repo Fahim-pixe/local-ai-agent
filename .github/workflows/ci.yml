@@ -28,5 +28,10 @@ jobs:
           ruff check src tests
           ruff format --check src tests
 
-      - name: Run foundation tests
+      - name: Build sandbox image
+        run: docker build --tag local-ai-agent-sandbox:latest docker/sandbox
+
+      - name: Run unit and Docker isolation tests
+        env:
+          RUN_DOCKER_INTEGRATION: "1"
         run: pytest

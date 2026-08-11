@@ -2,7 +2,7 @@
 
 A **contract-first, local-first** autonomous agent runtime. The local model decides what to do; the Python runtime validates whether it is allowed; tools run only through runtime policy; SQLite records the authoritative state.
 
-> **Current status:** This repository is initialized as the secure foundation for the engineering specification. It provides typed contracts, state transitions, output validation, SQLite bootstrap, workspace boundaries, FastAPI lifecycle scaffolding, local Ollama integration boundaries, Docker definitions, and focused tests. The complete execution loop and tool implementations are intentionally next-phase work.
+> **Current status:** This repository is initialized as the secure foundation for the engineering specification. It provides typed contracts, state transitions, output validation, SQLite bootstrap, workspace boundaries, FastAPI lifecycle scaffolding, local Ollama integration boundaries, a configuration-driven Docker sandbox executor, and focused tests. The complete execution loop and tool implementations are intentionally next-phase work.
 
 ## Architecture
 
@@ -26,7 +26,7 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | SQLite source of truth | `db/schema.py` creates runs, tool call/result, memory, event, backup, and FTS5 tables. |
 | Workspace isolation | `security/paths.py` resolves symlinks before containment checks. |
 | Session/API scaffold | `api/app.py` initializes FastAPI, token-gated lifecycle endpoints, health checks, and SSE-ready event streams. |
-| Sandbox boundary | `docker/sandbox/Dockerfile` is the dedicated base image for future approved tool execution. |
+| Sandbox boundary | `runtime/docker_sandbox.py` owns a Docker invocation with no network, read-only root, dropped capabilities, no-new-privileges, resource limits, an unprivileged user, and one validated writable workspace mount. |
 
 ## Prerequisites
 
@@ -55,7 +55,10 @@ make sandbox-image
 make test
 make lint
 
-# 5. Start the FastAPI control plane.
+# 5. With Docker running and the sandbox image built, execute the real isolation check.
+RUN_DOCKER_INTEGRATION=1 PYTHONPATH=src .venv/bin/pytest -m docker
+
+# 6. Start the FastAPI control plane.
 make run
 ```
 
@@ -102,7 +105,7 @@ The next commits should follow the specification's trust-first order:
 
 1. Implement the **minimal ReAct loop** and read-only filesystem tools through the `ToolRegistry`.
 2. Add **permission gates, budgets, retries, argument-hash loop detection, and operation-aware verification** to the execution pipeline.
-3. Implement transactional writes, a Docker-backed executor, secret scrubbing, and per-session locking.
+3. Add the execution pipeline around the Docker-backed executor: transactional writes, allowlist enforcement, secret scrubbing, and per-session locking.
 4. Add context assembly, memory persistence/retrieval, and local FTS5 indexing.
 5. Complete API lifecycle behavior, persistent SSE audit events, authorization pause/resume, and resume tokens.
 6. Add the production system prompt and end-to-end coding-task evaluation suite.

@@ -35,6 +35,9 @@ packages = ["src/local_ai_agent"]
 addopts = "-ra"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "docker: requires a locally available Docker engine and configured sandbox image",
+]
 
 [tool.ruff]
 target-version = "py312"
