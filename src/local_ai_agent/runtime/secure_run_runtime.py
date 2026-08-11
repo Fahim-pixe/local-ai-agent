@@ -11,6 +11,8 @@ from local_ai_agent.db.repository import RunRepository
 from local_ai_agent.memory.context_manager import ContextManager
 from local_ai_agent.memory.repository import MemoryRepository
 from local_ai_agent.runtime.budget_manager import BudgetManager
+from local_ai_agent.runtime.checkpointing import RepositoryCheckpointSink
+from local_ai_agent.runtime.continuation import DurableContinuationService
 from local_ai_agent.runtime.lifecycle import LifecycleError, RunLifecycleService
 from local_ai_agent.runtime.loop_detector import LoopDetector
 from local_ai_agent.runtime.ollama_client import OllamaClient
@@ -37,6 +39,7 @@ class SecureRunRuntime:
     react_loop: ReActLoop
     memory_repository: MemoryRepository
     context_manager: ContextManager
+    continuation: DurableContinuationService
 
     async def run_with_context(
         self,
@@ -71,6 +74,9 @@ class SecureRunRuntime:
             objective=run.objective,
             system_prompt=system_prompt,
             runtime_context=assembly.as_system_context(),
+            checkpoint_sink=RepositoryCheckpointSink(
+                run_id=self.run_id, repository=self.repository
+            ),
         )
 
 
@@ -117,6 +123,13 @@ def build_secure_run_runtime(
         registry=registry,
         tool_router=executor,
     )
+    continuation = DurableContinuationService(
+        run_id=run_id,
+        repository=repository,
+        lifecycle=lifecycle,
+        executor=executor,
+        react_loop=loop,
+    )
     return SecureRunRuntime(
         run_id=run_id,
         repository=repository,
@@ -126,4 +139,5 @@ def build_secure_run_runtime(
         react_loop=loop,
         memory_repository=memory_repository,
         context_manager=context_manager,
+        continuation=continuation,
     )

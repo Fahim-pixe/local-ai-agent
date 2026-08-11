@@ -26,7 +26,8 @@ This repository maps the supplied **Local AI Agent Architecture Specification v2
 | SQLite FTS5 initial semantic-search path | `memory_fts` virtual table | Implemented and migration-tested |
 | Symlink-safe workspace enforcement | `security/paths.py` | Implemented foundation |
 | Docker as tool sandbox boundary | `runtime/docker_sandbox.py`, `docker/sandbox/Dockerfile`, and centrally validated sandbox settings | Implemented and integration-tested |
-| API lifecycle + SSE | `api/app.py` | Implemented with durable creation, cancellation, authorization, replies, listing, historical events, and live SSE notifications |
+| Durable ReAct checkpoints and pending actions | `react_checkpoints`, `pending_actions`, `runtime/checkpointing.py`, and `runtime/continuation.py` | Implemented with append-only messages, approval, single claim, execution result checkpointing, and exact replay |
+| API lifecycle + SSE | `api/app.py` | Implemented with durable creation, cancellation, authorization, replies, listing, historical events, live SSE notifications, and `POST /runs/{id}/continue` |
 | Environment-controlled paths, models, budgets, limits | `config/agent.toml` and `.env.example` | Ready |
 | Contract, boundary, and persistence tests | `tests/test_foundation.py` | Ready |
 
@@ -49,10 +50,10 @@ The initial commit does not pretend to implement the full autonomous runtime. Th
 
 | Deferred component | Reason for deferral |
 | --- | --- |
-| Durable ReAct resume replay | Authorization decisions are persisted, but replaying the exact pending model/tool continuation needs a persisted message and plan checkpoint model. |
+| Run-worker orchestration and crash recovery | Continuation is durable and single-claim, but background worker ownership, abandoned-claim recovery, and observability classification remain explicit follow-on work. |
 | System prompt versioning and evaluation | Need a versioned production prompt, prompt hash integration, scenario corpus, and end-to-end local-model evaluation. |
 | Additional secure operations | Any new tool still requires operation-specific schema, path/command policy, risk gate, transaction semantics where applicable, verification, and audit coverage. |
 
 ## Immediate next development milestone
 
-The next milestone should implement durable ReAct checkpoint/replay and pending-action execution after authorization, then add production prompt versioning and end-to-end local-model evaluation. Priority 4 uses local FTS5 as the semantic retrieval baseline; embeddings should remain a separately evaluated enhancement.
+The next milestone should add production prompt versioning, prompt hashing, and end-to-end local-model evaluation, alongside explicit worker/crash-recovery policy for durable continuations. Priority 4 uses local FTS5 as the semantic retrieval baseline; embeddings should remain a separately evaluated enhancement.

@@ -25,6 +25,7 @@ class AuthorizationRequest:
     tool_name: str
     arguments: dict[str, Any]
     risk: str
+    checkpoint_id: int | None = None
 
 
 class RunLifecycleService:
@@ -102,9 +103,22 @@ class RunLifecycleService:
 
     def require_authorization(self, request: AuthorizationRequest) -> AgentRun:
         self._require_run(request.run_id)
+        action = self._repository.create_pending_action(
+            run_id=request.run_id,
+            tool_name=request.tool_name,
+            arguments=request.arguments,
+            risk_level=request.risk,
+            checkpoint_id=request.checkpoint_id,
+        )
         if not self._repository.set_pending_authorization(
             request.run_id,
-            {"tool_name": request.tool_name, "arguments": request.arguments, "risk": request.risk},
+            {
+                "action_id": str(action.id),
+                "tool_name": request.tool_name,
+                "arguments": request.arguments,
+                "risk": request.risk,
+                "checkpoint_id": request.checkpoint_id,
+            },
         ):
             raise LifecycleError("Authorization control record is unavailable.")
         return self.transition(
@@ -122,12 +136,15 @@ class RunLifecycleService:
         if not self._repository.resolve_authorization(run_id):
             raise LifecycleError("Authorization control record is unavailable.")
         if approved:
+            if self._repository.approve_pending_action(run_id) is None:
+                raise LifecycleError("Pending action could not be approved.")
             return self.transition(
                 run_id,
                 AgentState.EXECUTE,
                 "Authorization approved; runtime may resume the pending tool operation.",
                 {"tool_name": pending["tool_name"]},
             )
+        self._repository.reject_pending_action(run_id)
         return self.transition(
             run_id,
             AgentState.PARTIAL,

@@ -5,13 +5,40 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from local_ai_agent.db.schema import initialize_database
 from local_ai_agent.schemas.contracts import AgentEvent, AgentPlan, AgentRun, AgentState, ToolResult
+
+
+@dataclass(frozen=True, slots=True)
+class ReActCheckpoint:
+    id: int
+    run_id: UUID
+    sequence: int
+    phase: str
+    messages: list[dict[str, Any]]
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PendingAction:
+    id: UUID
+    run_id: UUID
+    tool_name: str
+    arguments: dict[str, Any]
+    risk_level: str
+    checkpoint_id: int | None
+    status: str
+    approved_at: datetime | None
+    claimed_at: datetime | None
+    executed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class RunRepository:
@@ -205,6 +232,153 @@ class RunRepository:
                 "UPDATE file_backups SET restored_at = ? WHERE id = ?", (self._now(), backup_id)
             )
 
+    def save_react_checkpoint(
+        self, *, run_id: UUID, phase: str, messages: list[dict[str, Any]]
+    ) -> ReActCheckpoint:
+        now = self._now()
+        with self.connect() as connection:
+            sequence = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM react_checkpoints WHERE run_id = ?",
+                    (str(run_id),),
+                ).fetchone()[0]
+            )
+            cursor = connection.execute(
+                """
+                INSERT INTO react_checkpoints (run_id, sequence, phase, messages_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (str(run_id), sequence, phase, json.dumps(messages, default=str), now),
+            )
+        return ReActCheckpoint(
+            id=int(cursor.lastrowid),
+            run_id=run_id,
+            sequence=sequence,
+            phase=phase,
+            messages=messages,
+            created_at=datetime.fromisoformat(now),
+        )
+
+    def get_react_checkpoint(self, checkpoint_id: int) -> ReActCheckpoint | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM react_checkpoints WHERE id = ?", (checkpoint_id,)
+            ).fetchone()
+        return self._row_to_checkpoint(row) if row else None
+
+    def latest_react_checkpoint(self, run_id: UUID) -> ReActCheckpoint | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM react_checkpoints WHERE run_id = ? ORDER BY sequence DESC LIMIT 1",
+                (str(run_id),),
+            ).fetchone()
+        return self._row_to_checkpoint(row) if row else None
+
+    def create_pending_action(
+        self,
+        *,
+        run_id: UUID,
+        tool_name: str,
+        arguments: dict[str, Any],
+        risk_level: str,
+        checkpoint_id: int | None,
+    ) -> PendingAction:
+        now = self._now()
+        action_id = uuid4()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO pending_actions (
+                    id, run_id, tool_name, arguments_json, risk_level, checkpoint_id,
+                    status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                """,
+                (
+                    str(action_id),
+                    str(run_id),
+                    tool_name,
+                    json.dumps(arguments, sort_keys=True, default=str),
+                    risk_level,
+                    checkpoint_id,
+                    now,
+                    now,
+                ),
+            )
+        return self.get_pending_action(run_id)  # type: ignore[return-value]
+
+    def get_pending_action(self, run_id: UUID) -> PendingAction | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM pending_actions
+                WHERE run_id = ? AND status IN ('PENDING', 'APPROVED', 'EXECUTING')
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (str(run_id),),
+            ).fetchone()
+        return self._row_to_pending_action(row) if row else None
+
+    def approve_pending_action(self, run_id: UUID) -> PendingAction | None:
+        now = self._now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE pending_actions SET status = 'APPROVED', approved_at = ?, updated_at = ?
+                WHERE run_id = ? AND status = 'PENDING'
+                """,
+                (now, now, str(run_id)),
+            )
+        return self.get_pending_action(run_id)
+
+    def reject_pending_action(self, run_id: UUID) -> None:
+        now = self._now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE pending_actions SET status = 'REJECTED', updated_at = ?
+                WHERE run_id = ? AND status = 'PENDING'
+                """,
+                (now, str(run_id)),
+            )
+
+    def claim_approved_action(self, run_id: UUID) -> PendingAction | None:
+        now = self._now()
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM pending_actions
+                WHERE run_id = ? AND status = 'APPROVED' ORDER BY approved_at ASC LIMIT 1
+                """,
+                (str(run_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = connection.execute(
+                """
+                UPDATE pending_actions SET status = 'EXECUTING', claimed_at = ?, updated_at = ?
+                WHERE id = ? AND status = 'APPROVED'
+                """,
+                (now, now, row["id"]),
+            )
+            if not cursor.rowcount:
+                return None
+            claimed = connection.execute(
+                "SELECT * FROM pending_actions WHERE id = ?", (row["id"],)
+            ).fetchone()
+        return self._row_to_pending_action(claimed)
+
+    def finish_pending_action(self, action_id: UUID, succeeded: bool) -> None:
+        now = self._now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE pending_actions
+                SET status = ?, executed_at = ?, updated_at = ?
+                WHERE id = ? AND status = 'EXECUTING'
+                """,
+                ("EXECUTED" if succeeded else "FAILED", now, now, str(action_id)),
+            )
+
     def request_cancellation(self, run_id: UUID) -> bool:
         return self._update_control(run_id, "cancel_requested = 1")
 
@@ -266,6 +440,34 @@ class RunRepository:
                 (*values, self._now(), str(run_id)),
             )
         return bool(cursor.rowcount)
+
+    @staticmethod
+    def _row_to_checkpoint(row: sqlite3.Row) -> ReActCheckpoint:
+        return ReActCheckpoint(
+            id=int(row["id"]),
+            run_id=UUID(row["run_id"]),
+            sequence=int(row["sequence"]),
+            phase=row["phase"],
+            messages=json.loads(row["messages_json"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    @staticmethod
+    def _row_to_pending_action(row: sqlite3.Row) -> PendingAction:
+        return PendingAction(
+            id=UUID(row["id"]),
+            run_id=UUID(row["run_id"]),
+            tool_name=row["tool_name"],
+            arguments=json.loads(row["arguments_json"]),
+            risk_level=row["risk_level"],
+            checkpoint_id=row["checkpoint_id"],
+            status=row["status"],
+            approved_at=datetime.fromisoformat(row["approved_at"]) if row["approved_at"] else None,
+            claimed_at=datetime.fromisoformat(row["claimed_at"]) if row["claimed_at"] else None,
+            executed_at=datetime.fromisoformat(row["executed_at"]) if row["executed_at"] else None,
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
 
     @staticmethod
     def _now() -> str:

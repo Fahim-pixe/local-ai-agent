@@ -54,6 +54,7 @@ class ToolRouter:
         arguments: dict[str, Any],
         authorization_granted: bool = False,
         attempts: int = 1,
+        checkpoint_id: int | None = None,
     ) -> ToolRoutingOutcome:
         """Route one requested operation through the fixed execution-control pipeline."""
         try:

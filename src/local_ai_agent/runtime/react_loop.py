@@ -23,7 +23,12 @@ class NativeToolExecutor(Protocol):
         arguments: dict[str, Any],
         authorization_granted: bool = False,
         attempts: int = 1,
+        checkpoint_id: int | None = None,
     ) -> ToolRoutingOutcome: ...
+
+
+class ReActCheckpointSink(Protocol):
+    async def checkpoint(self, *, phase: str, messages: list[dict[str, Any]]) -> int: ...
 
 
 class NativeToolChatClient(Protocol):
@@ -65,13 +70,26 @@ class ReActLoop:
         self._tool_router = tool_router
 
     async def run(
-        self, *, objective: str, system_prompt: str, runtime_context: str | None = None
+        self,
+        *,
+        objective: str,
+        system_prompt: str,
+        runtime_context: str | None = None,
+        initial_messages: list[dict[str, Any]] | None = None,
+        checkpoint_sink: ReActCheckpointSink | None = None,
     ) -> ReActLoopResult:
-        """Execute one bounded ReAct run until final content, pause, failure, or turn limit."""
-        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-        if runtime_context:
-            messages.append({"role": "system", "content": runtime_context})
-        messages.append({"role": "user", "content": objective})
+        """Execute or continue one bounded ReAct run with optional durable checkpoints."""
+        if initial_messages is not None:
+            messages = list(initial_messages)
+            checkpoint_phase = "react-resumed"
+        else:
+            messages = [{"role": "system", "content": system_prompt}]
+            if runtime_context:
+                messages.append({"role": "system", "content": runtime_context})
+            messages.append({"role": "user", "content": objective})
+            checkpoint_phase = "react-started"
+        if checkpoint_sink:
+            await checkpoint_sink.checkpoint(phase=checkpoint_phase, messages=messages)
         outcomes: list[ToolRoutingOutcome] = []
         max_turns = self._settings.default_max_tool_calls + 1
 
@@ -100,6 +118,11 @@ class ReActLoop:
                 )
 
             messages.append(message)
+            assistant_checkpoint_id = (
+                await checkpoint_sink.checkpoint(phase="assistant-response", messages=messages)
+                if checkpoint_sink
+                else None
+            )
             if not tool_calls:
                 if not isinstance(content, str) or not content.strip():
                     return self._failed_result(
@@ -108,6 +131,8 @@ class ReActLoop:
                         error_code="MODEL_OUTPUT_INVALID",
                         error_message="Model response contained neither tool calls nor final content.",
                     )
+                if checkpoint_sink:
+                    await checkpoint_sink.checkpoint(phase="react-complete", messages=messages)
                 return ReActLoopResult(
                     state=AgentState.COMPLETE,
                     final_response=content,
@@ -125,9 +150,34 @@ class ReActLoop:
                         error_code="MODEL_OUTPUT_INVALID",
                         error_message=str(error),
                     )
-                outcome = await self._tool_router.execute(tool_name=tool_name, arguments=arguments)
+                if assistant_checkpoint_id is None:
+                    outcome = await self._tool_router.execute(
+                        tool_name=tool_name,
+                        arguments=arguments,
+                    )
+                else:
+                    outcome = await self._tool_router.execute(
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        checkpoint_id=assistant_checkpoint_id,
+                    )
                 outcomes.append(outcome)
+                if outcome.authorization_required:
+                    if checkpoint_sink:
+                        await checkpoint_sink.checkpoint(
+                            phase="authorization-required", messages=messages
+                        )
+                    return ReActLoopResult(
+                        state=AgentState.AUTHORIZATION_REQUIRED,
+                        final_response=None,
+                        messages=messages,
+                        tool_outcomes=outcomes,
+                        error_code=outcome.result.error_code,
+                        error_message=outcome.result.error_message,
+                    )
                 messages.append(self._tool_result_message(tool_name, outcome.result))
+                if checkpoint_sink:
+                    await checkpoint_sink.checkpoint(phase="tool-result", messages=messages)
                 if outcome.result.status is ToolStatus.CANCELLED:
                     return ReActLoopResult(
                         state=AgentState.CANCELLED,
@@ -137,16 +187,9 @@ class ReActLoop:
                         error_code=outcome.result.error_code,
                         error_message=outcome.result.error_message,
                     )
-                if outcome.authorization_required:
-                    return ReActLoopResult(
-                        state=AgentState.AUTHORIZATION_REQUIRED,
-                        final_response=None,
-                        messages=messages,
-                        tool_outcomes=outcomes,
-                        error_code=outcome.result.error_code,
-                        error_message=outcome.result.error_message,
-                    )
 
+        if checkpoint_sink:
+            await checkpoint_sink.checkpoint(phase="react-partial", messages=messages)
         return ReActLoopResult(
             state=AgentState.PARTIAL,
             final_response=None,

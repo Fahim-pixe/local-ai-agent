@@ -44,6 +44,7 @@ class RunToolExecutor:
         arguments: dict[str, Any],
         authorization_granted: bool = False,
         attempts: int = 1,
+        checkpoint_id: int | None = None,
     ) -> ToolRoutingOutcome:
         if self._lifecycle.cancel_if_requested(self._run_id):
             return self._cancelled_outcome(tool_name)
@@ -63,6 +64,7 @@ class RunToolExecutor:
             arguments=arguments,
             authorization_granted=authorization_granted,
             attempts=attempts,
+            checkpoint_id=checkpoint_id,
         )
         duration_ms = round((perf_counter() - started) * 1_000)
         self._repository.record_tool_result(
@@ -91,6 +93,7 @@ class RunToolExecutor:
                         tool_name=tool_name,
                         arguments=arguments,
                         risk=definition.risk.value,
+                        checkpoint_id=checkpoint_id,
                     )
                 )
         return outcome

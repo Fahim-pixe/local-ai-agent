@@ -115,11 +115,15 @@ def test_lifecycle_blocks_concurrent_workspace_owner_and_persists_authorization(
         )
     )
     assert waiting.state is AgentState.AUTHORIZATION_REQUIRED
-    assert service.pending_authorization(first.id) == {
+    pending = service.pending_authorization(first.id)
+    assert pending is not None
+    assert {key: pending[key] for key in ("tool_name", "arguments", "risk")} == {
         "tool_name": "filesystem.delete_file",
         "arguments": {"path": "old.txt"},
         "risk": "HIGH",
     }
+    assert pending["action_id"]
+    assert pending["checkpoint_id"] is None
     resumed = service.resolve_authorization(first.id, approved=True)
     assert resumed.state is AgentState.EXECUTE
     assert service.pending_authorization(first.id) is None

@@ -2,7 +2,7 @@
 
 A **contract-first, local-first** autonomous agent runtime. The local model decides what to do; the Python runtime validates whether it is allowed; tools run only through runtime policy; SQLite records the authoritative state.
 
-> **Current status:** The contract-first foundation now includes a minimal ReAct loop, durable lifecycle controls, transactional workspace mutation, verified memory lifecycle with FTS5 retrieval, priority-tiered context assembly, and sandboxed execution. Durable resume replay and production evaluation remain subsequent milestones.
+> **Current status:** The contract-first foundation now includes checkpointed ReAct continuation, single-claim approved actions, transactional workspace mutation, verified memory lifecycle with FTS5 retrieval, priority-tiered context assembly, and sandboxed execution. Production prompt versioning and evaluation remain subsequent milestones.
 
 ## Architecture
 
@@ -33,7 +33,8 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Memory and retrieval | `MemoryRepository` upserts confidence-labeled records, promotes expired entries to `STALE`, and retrieves semantic/long-term memory through rebuilt-safe SQLite FTS5. |
 | Context assembly | `ContextManager` preserves P0 runtime state, keeps fitting P1 evidence and retrieved memory, truncates P2 history with line-range hints, and drops P3 duplicate/old verified outputs. |
 | Verified memory tool | `memory.store` is a registered medium-risk tool with secret redaction and retrieval-based verification. |
-| API lifecycle | `api/app.py` provides token-gated lifecycle endpoints, durable event history with SSE fanout, cancellation, authorization, replies, and run listing. |
+| Durable ReAct continuation | Append-only message checkpoints bind high-risk requests to a single pending action, which must be approved, claimed once, executed, and replayed from the exact assistant turn. |
+| API lifecycle | `api/app.py` provides token-gated lifecycle endpoints, durable event history with SSE fanout, cancellation, authorization, replies, run listing, and approved-action continuation. |
 | Sandbox boundary | `runtime/docker_sandbox.py` owns a Docker invocation with no network, read-only root, dropped capabilities, no-new-privileges, resource limits, an unprivileged user, and one validated writable workspace mount. |
 
 ## Prerequisites
@@ -103,7 +104,8 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 | `GET` | `/runs/{run_id}` | Retrieves persisted run metadata. |
 | `GET` | `/runs/{run_id}/events` | Streams durable historical events followed by live SSE notifications. |
 | `POST` | `/runs/{run_id}/cancel` | Persists cancellation for the execution boundary to honor before the next tool. |
-| `POST` | `/runs/{run_id}/authorize` | Resolves an explicit pending authorization and moves the run to execute or partial state. |
+| `POST` | `/runs/{run_id}/authorize` | Resolves an explicit pending authorization and marks its checkpoint-linked action approved or rejected. |
+| `POST` | `/runs/{run_id}/continue` | Atomically claims one approved action, executes it through the secure tool path, checkpoints the result, and replays the stored ReAct conversation. |
 | `GET` | `/runs/{run_id}/pending-authorization` | Returns the sanitized persisted pending tool action, when present. |
 | `POST` | `/runs/{run_id}/reply` | Persists a user reply event for a paused runtime. |
 | `GET` | `/runs` | Returns recent persisted runs. |
@@ -112,7 +114,7 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 
 The next commits should follow the specification's trust-first order:
 
-1. Add durable ReAct resume replay, pending-action execution after authorization, and explicit run-worker orchestration.
+1. Add explicit run-worker orchestration, crash recovery classification, and richer continuation-state inspection.
 2. Add production system-prompt versioning, prompt hashing, and an end-to-end local coding-task evaluation corpus.
 3. Extend semantic memory with local embeddings only after evaluating the FTS5 baseline and preserving the current confidence/staleness model.
 4. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, independent verification, and audit coverage.

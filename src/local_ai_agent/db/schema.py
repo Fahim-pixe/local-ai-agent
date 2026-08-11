@@ -103,6 +103,35 @@ CREATE TABLE IF NOT EXISTS session_locks (
     run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
     acquired_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS react_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL,
+    phase TEXT NOT NULL,
+    messages_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(run_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_react_checkpoints_run ON react_checkpoints(run_id, sequence DESC);
+
+CREATE TABLE IF NOT EXISTS pending_actions (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    tool_name TEXT NOT NULL,
+    arguments_json TEXT NOT NULL,
+    risk_level TEXT NOT NULL,
+    checkpoint_id INTEGER REFERENCES react_checkpoints(id) ON DELETE SET NULL,
+    status TEXT NOT NULL,
+    approved_at TEXT,
+    claimed_at TEXT,
+    executed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_actions_run_status ON pending_actions(run_id, status);
 """
 
 
