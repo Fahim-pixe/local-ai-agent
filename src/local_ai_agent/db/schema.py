@@ -92,6 +92,19 @@ CREATE TABLE IF NOT EXISTS file_backups (
     restored_at TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS run_controls (
+    run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    pending_authorization_json TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_locks (
+    workspace_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    acquired_at TEXT NOT NULL
+);
 """
 
 

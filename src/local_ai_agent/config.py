@@ -67,6 +67,7 @@ class Settings:
     recent_conversation_messages: int
     filesystem_max_read_bytes: int
     filesystem_max_list_entries: int
+    shell_allowlist: tuple[str, ...]
     docker_binary: str
     docker_sandbox_image: str
     docker_sandbox_network: str
@@ -110,6 +111,7 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
     limits = raw["limits"]
     context = raw["context"]
     filesystem = raw["filesystem"]
+    tool_policy = raw["tool_policy"]
     sandbox = raw["sandbox"]
     workspace = raw["workspace"]
 
@@ -145,6 +147,7 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
         filesystem_max_list_entries=_env_int(
             "FILESYSTEM_MAX_LIST_ENTRIES", filesystem["max_list_entries"]
         ),
+        shell_allowlist=tuple(tool_policy["shell_allowlist"]),
         docker_binary=os.getenv("DOCKER_BINARY", sandbox["docker_binary"]),
         docker_sandbox_image=os.getenv("DOCKER_SANDBOX_IMAGE", sandbox["image"]),
         docker_sandbox_network=os.getenv("DOCKER_SANDBOX_NETWORK", sandbox["network"]),

@@ -2,7 +2,7 @@
 
 A **contract-first, local-first** autonomous agent runtime. The local model decides what to do; the Python runtime validates whether it is allowed; tools run only through runtime policy; SQLite records the authoritative state.
 
-> **Current status:** This repository is initialized as the secure foundation for the engineering specification. It provides typed contracts, state transitions, output validation, SQLite bootstrap, workspace boundaries, a minimal native-Ollama ReAct loop with verified read-only filesystem tools, FastAPI lifecycle scaffolding, a configuration-driven Docker sandbox executor, and focused tests. Durable run lifecycle behavior and higher-risk tools remain next-phase work.
+> **Current status:** The contract-first foundation, minimal ReAct loop, durable run lifecycle, transactional workspace mutation, authorization controls, and sandboxed execution boundary are implemented. Context/memory retrieval, resume replay, and broader production evaluation remain subsequent milestones.
 
 ## Architecture
 
@@ -27,7 +27,10 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Local model boundary | `runtime/ollama_client.py` uses native Ollama `tools` payloads and explicit local failure types. |
 | SQLite source of truth | `db/schema.py` creates runs, tool call/result, memory, event, backup, and FTS5 tables. |
 | Workspace isolation | `security/paths.py` resolves symlinks before containment checks. |
-| Session/API scaffold | `api/app.py` initializes FastAPI, token-gated lifecycle endpoints, health checks, and SSE-ready event streams. |
+| Durable lifecycle and concurrency | `RunLifecycleService` persists state transitions, audit events, cancellation requests, authorization pauses, and a per-workspace SQLite lock. |
+| Transactional mutations | `TransactionManager` snapshots regular files, atomically writes or deletes, verifies outcomes, and rolls back failed operations. |
+| Secure tool surface | `filesystem.write_file`, `filesystem.delete_file`, `shell.execute`, and `python.execute` are risk-classified, verified, audited, and gated by runtime policy. |
+| API lifecycle | `api/app.py` provides token-gated lifecycle endpoints, durable event history with SSE fanout, cancellation, authorization, replies, and run listing. |
 | Sandbox boundary | `runtime/docker_sandbox.py` owns a Docker invocation with no network, read-only root, dropped capabilities, no-new-privileges, resource limits, an unprivileged user, and one validated writable workspace mount. |
 
 ## Prerequisites
@@ -50,7 +53,7 @@ make setup
 # 2. Set a strong AGENT_API_TOKEN in .env, then create workspace state and SQLite schema.
 make bootstrap
 
-# 3. Build the future execution sandbox image.
+# 3. Build the isolated execution sandbox image.
 make sandbox-image
 
 # 4. Run tests and static checks.
@@ -82,34 +85,32 @@ Versioned defaults belong in `config/agent.toml`. Secrets and environment-specif
 | `EMBEDDING_MODEL` | Local embedding model for the later RAG pipeline. |
 | `WORKSPACE_ROOT`, `SQLITE_PATH` | Isolated workspace and authoritative SQLite store. |
 | `DEFAULT_MAX_*` | Runtime budget ceilings for tools, duration, and shell actions. |
-| `DOCKER_SANDBOX_*` | Resource and network restrictions for future tool execution. |
+| `DOCKER_SANDBOX_*` | Mandatory resource, user, filesystem, and network restrictions for sandboxed high-risk tools. |
 | `AGENT_API_TOKEN` | Bearer token for run lifecycle endpoints. |
 
-The repository deliberately keeps security decisions in the runtime layer. The future shell/Python tools must run only after schema validation, policy checks, path sanitization, risk/authorization checks, budget and loop checks, snapshots, execution, verification, and audit logging.
+The repository deliberately keeps security decisions in the runtime layer. Shell and Python execution require explicit authorization, command policy approval, the Docker process boundary, output redaction, independent verification, and durable audit records. Workspace writes are snapshot-backed and only commit after post-operation verification.
 
 ## API lifecycle scaffold
 
 | Method | Route | Initial behavior |
 | --- | --- | --- |
 | `GET` | `/health` | Checks SQLite, workspace, and local Ollama model readiness. |
-| `POST` | `/runs` | Validates and persists a new run request. |
+| `POST` | `/runs` | Persists a new run, acquires its workspace lock, and emits a durable creation event. |
 | `GET` | `/runs/{run_id}` | Retrieves persisted run metadata. |
-| `GET` | `/runs/{run_id}/events` | Opens an SSE-ready event stream. |
-| `POST` | `/runs/{run_id}/cancel` | Accepts a cancellation request for the future runtime loop. |
-| `POST` | `/runs/{run_id}/authorize` | Receives approval/denial for a gated future tool action. |
-| `GET` | `/runs/{run_id}/pending-authorization` | Provides the current authorization placeholder. |
-| `POST` | `/runs/{run_id}/reply` | Accepts user clarification for a paused future run. |
-| `GET` | `/runs` | Reserved for paginated run listing implementation. |
+| `GET` | `/runs/{run_id}/events` | Streams durable historical events followed by live SSE notifications. |
+| `POST` | `/runs/{run_id}/cancel` | Persists cancellation for the execution boundary to honor before the next tool. |
+| `POST` | `/runs/{run_id}/authorize` | Resolves an explicit pending authorization and moves the run to execute or partial state. |
+| `GET` | `/runs/{run_id}/pending-authorization` | Returns the sanitized persisted pending tool action, when present. |
+| `POST` | `/runs/{run_id}/reply` | Persists a user reply event for a paused runtime. |
+| `GET` | `/runs` | Returns recent persisted runs. |
 
 ## Implementation order
 
 The next commits should follow the specification's trust-first order:
 
-1. Persist minimal ReAct run state, tool calls/results, verification evidence, and runtime events through the FastAPI lifecycle.
-2. Add cancellation, authorization pause/resume, per-session locking, and resume tokens around the persisted run loop.
-3. Add the execution pipeline around the Docker-backed executor: transactional writes, allowlist enforcement, secret scrubbing, and per-session locking.
-4. Add context assembly, memory persistence/retrieval, and local FTS5 indexing.
-5. Complete API lifecycle behavior, persistent SSE audit events, authorization pause/resume, and resume tokens.
-6. Add the production system prompt and end-to-end coding-task evaluation suite.
+1. Add context assembly, memory persistence/retrieval, stale-memory policy, and local FTS5 indexing.
+2. Add durable ReAct resume replay, pending-action execution after authorization, and explicit run-worker orchestration.
+3. Add production system-prompt versioning, prompt hashing, and end-to-end coding-task evaluation.
+4. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, independent verification, and audit coverage.
 
 See [`docs/specification-alignment.md`](docs/specification-alignment.md) for the setup-to-specification mapping.

@@ -10,9 +10,20 @@ from typing import Any, Protocol
 from local_ai_agent.config import Settings
 from local_ai_agent.runtime.ollama_client import OllamaError
 from local_ai_agent.runtime.output_validator import ModelOutputValidationError, OutputValidator
-from local_ai_agent.runtime.tool_router import ToolRouter, ToolRoutingOutcome
-from local_ai_agent.schemas.contracts import AgentState, ToolResult
+from local_ai_agent.runtime.tool_router import ToolRoutingOutcome
+from local_ai_agent.schemas.contracts import AgentState, ToolResult, ToolStatus
 from local_ai_agent.tools.registry import ToolRegistry
+
+
+class NativeToolExecutor(Protocol):
+    async def execute(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        authorization_granted: bool = False,
+        attempts: int = 1,
+    ) -> ToolRoutingOutcome: ...
 
 
 class NativeToolChatClient(Protocol):
@@ -46,7 +57,7 @@ class ReActLoop:
         settings: Settings,
         client: NativeToolChatClient,
         registry: ToolRegistry,
-        tool_router: ToolRouter,
+        tool_router: NativeToolExecutor,
     ) -> None:
         self._settings = settings
         self._client = client
@@ -115,6 +126,15 @@ class ReActLoop:
                 outcome = await self._tool_router.execute(tool_name=tool_name, arguments=arguments)
                 outcomes.append(outcome)
                 messages.append(self._tool_result_message(tool_name, outcome.result))
+                if outcome.result.status is ToolStatus.CANCELLED:
+                    return ReActLoopResult(
+                        state=AgentState.CANCELLED,
+                        final_response=None,
+                        messages=messages,
+                        tool_outcomes=outcomes,
+                        error_code=outcome.result.error_code,
+                        error_message=outcome.result.error_message,
+                    )
                 if outcome.authorization_required:
                     return ReActLoopResult(
                         state=AgentState.AUTHORIZATION_REQUIRED,

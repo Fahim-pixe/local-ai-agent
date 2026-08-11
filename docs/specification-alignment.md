@@ -1,6 +1,6 @@
 # Specification Alignment
 
-This initialization converts the supplied **Local AI Agent Architecture Specification v2.0** into a repository foundation. It intentionally creates the contracts, boundaries, and infrastructure that must exist before implementation of autonomous tool execution.
+This repository maps the supplied **Local AI Agent Architecture Specification v2.0** into a contract-first local runtime. It now includes the initial autonomous read path and the Priority 3 persistence, transaction, authorization, and sandbox boundaries required before broader tool expansion.
 
 ## Core requirements mapped to the repository
 
@@ -15,11 +15,15 @@ This initialization converts the supplied **Local AI Agent Architecture Specific
 | PlanTracker with dependency-safe status progression | `runtime/plan_tracker.py` | Implemented |
 | Minimal native-Ollama ReAct loop with low-risk filesystem reads | `runtime/react_loop.py`, `runtime/minimal_runtime.py`, and `tools/filesystem.py` | Implemented and unit-tested |
 | Permission gating, budget enforcement, retries, loop blocking, and operation-aware verification | `runtime/permission_gate.py`, `budget_manager.py`, `retry_engine.py`, `loop_detector.py`, `verification_engine.py`, and `tool_router.py` | Implemented and unit-tested |
-| SQLite source of truth for runs, tools, results, events, memory, backups | `db/schema.py` and `db/repository.py` | Initialized |
+| SQLite source of truth for runs, tools, results, events, memory, backups | `db/schema.py` and `db/repository.py` | Implemented for runs, events, tool audit, backups, cancellation, authorization, and session locks |
+| Durable lifecycle, cancellation, authorization, and per-session lock | `runtime/lifecycle.py`, `runtime/run_executor.py`, and SQLite `run_controls` / `session_locks` | Implemented and API-tested |
+| Transactional writes and deletes | `runtime/transaction_manager.py` and `tools/mutation.py` | Implemented with snapshots, atomic writes, independent verification, and rollback tests |
+| Command policy and output secret scrubbing | `security/command_policy.py` and `security/output_scrubber.py` | Implemented and tested |
+| Sandboxed high-risk execution tools | `shell.execute` and `python.execute` through `tools/mutation.py` and `runtime/docker_sandbox.py` | Implemented; explicit authorization and command policy required |
 | SQLite FTS5 initial semantic-search path | `memory_fts` virtual table | Initialized |
 | Symlink-safe workspace enforcement | `security/paths.py` | Implemented foundation |
 | Docker as tool sandbox boundary | `runtime/docker_sandbox.py`, `docker/sandbox/Dockerfile`, and centrally validated sandbox settings | Implemented and integration-tested |
-| API lifecycle + SSE | `api/app.py` | Scaffolded |
+| API lifecycle + SSE | `api/app.py` | Implemented with durable creation, cancellation, authorization, replies, listing, historical events, and live SSE notifications |
 | Environment-controlled paths, models, budgets, limits | `config/agent.toml` and `.env.example` | Ready |
 | Contract, boundary, and persistence tests | `tests/test_foundation.py` | Ready |
 
@@ -42,14 +46,11 @@ The initial commit does not pretend to implement the full autonomous runtime. Th
 
 | Deferred component | Reason for deferral |
 | --- | --- |
-| Run-lifecycle integration | The minimal ReAct loop is implemented; it still needs durable run loading, plan persistence, event auditing, cancellation, authorization resume, and FastAPI invocation. |
-| Filesystem and shell tool handlers | Must register concrete validators, handlers, and operation-specific verification functions with the implemented ToolRouter; write-capable operations also need backup semantics. |
-| Tool-pipeline integration around Docker | The executor is implemented, but future tool handlers still need allowlisting, authorization, backups, verification, audit persistence, and transactional rollback before delegation. |
-| Persistent event audit and session lock enforcement | Require full lifecycle transitions and transaction management. |
-| Memory indexing/retrieval and context compression | Need deliberate chunking, confidence, staleness, and token-budget semantics. |
-| Authorization pause/resume | Depends on persisted runtime continuation state and tool transaction management. |
-| System prompt | Must be loaded only after the runtime’s tool and output contracts are complete. |
+| Context and memory retrieval | Needs deliberate P0/P1/P2/P3 assembly, stale-memory policy, FTS5 retrieval, and token-budget truncation semantics. |
+| Durable ReAct resume replay | Authorization decisions are persisted, but replaying the exact pending model/tool continuation needs a persisted message and plan checkpoint model. |
+| System prompt versioning and evaluation | Need a versioned production prompt, prompt hash integration, scenario corpus, and end-to-end local-model evaluation. |
+| Additional secure operations | Any new tool still requires operation-specific schema, path/command policy, risk gate, transaction semantics where applicable, verification, and audit coverage. |
 
 ## Immediate next development milestone
 
-The next milestone should persist and expose the minimal loop through run lifecycle handling: tool calls/results, verification evidence, events, cancellation, and resume state. The Docker executor is available for future approved actions, but write-capable or high-risk operations should remain disabled until their full policy, backup, transaction, and authorization stages are complete.
+The next milestone should add context and memory retrieval while designing durable ReAct checkpoint/replay for authorization-resume. Priority 3 write, delete, shell, and Python actions are now protected by the policy, transaction, authorization, verification, audit, and Docker boundaries; they should only be invoked by a run-bound secure runtime.

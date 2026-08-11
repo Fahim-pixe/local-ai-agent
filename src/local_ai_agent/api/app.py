@@ -1,4 +1,4 @@
-"""FastAPI application factory for the local agent control plane."""
+"""FastAPI control plane for durable local-agent run lifecycle state."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from local_ai_agent.config import Settings, ensure_workspace, load_settings
 from local_ai_agent.db.repository import RunRepository
+from local_ai_agent.runtime.lifecycle import LifecycleError, RunLifecycleService, WorkspaceBusyError
 from local_ai_agent.runtime.ollama_client import OllamaClient, OllamaError
 from local_ai_agent.schemas.contracts import (
     AgentEvent,
     AgentRun,
-    AgentState,
     AuthorizationDecision,
     CreateRunRequest,
     RunBudget,
@@ -29,7 +29,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class EventBroker:
-    """In-process SSE broker; persistent audit events remain in SQLite in later phases."""
+    """In-process notification fanout; SQLite retains the durable event history."""
 
     def __init__(self) -> None:
         self._queues: dict[UUID, asyncio.Queue[AgentEvent]] = defaultdict(asyncio.Queue)
@@ -52,9 +52,10 @@ def _default_budget(settings: Settings) -> RunBudget:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    """Create the API app without starting model execution as part of setup."""
+    """Create the API app with SQLite-authoritative lifecycle controls."""
     runtime_settings = settings or load_settings()
     repository = RunRepository(runtime_settings.sqlite_path)
+    lifecycle = RunLifecycleService(repository)
     broker = EventBroker()
 
     @asynccontextmanager
@@ -65,12 +66,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Local AI Agent",
-        version="0.1.0",
+        version="0.2.0",
         description="Policy-enforced local AI agent control plane.",
         lifespan=lifespan,
     )
     app.state.settings = runtime_settings
     app.state.repository = repository
+    app.state.lifecycle = lifecycle
     app.state.broker = broker
 
     async def require_api_token(
@@ -82,6 +84,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API token."
             )
+
+    async def publish_latest_event(run_id: UUID) -> None:
+        events = repository.list_events(run_id)
+        if events:
+            await broker.publish(events[-1])
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -96,9 +103,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ollama_status["available"] = True
         except OllamaError as error:
             ollama_status["error"] = type(error).__name__
+        database_available = repository.health_check()
         return {
-            "status": "ok" if repository.health_check() else "degraded",
-            "database": repository.health_check(),
+            "status": "ok" if database_available else "degraded",
+            "database": database_available,
             "workspace": runtime_settings.workspace_project_path.is_dir(),
             "ollama": ollama_status,
         }
@@ -112,15 +120,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             workspace_id=payload.workspace_id,
             budget=payload.budget or _default_budget(runtime_settings),
         )
-        created = repository.create_run(run)
-        await broker.publish(
-            AgentEvent(
-                run_id=created.id,
-                type="run.created",
-                state=created.state,
-                message="Run created and ready for runtime validation.",
-            )
-        )
+        try:
+            created = lifecycle.register_run(run)
+        except WorkspaceBusyError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        await publish_latest_event(created.id)
         return created
 
     @app.get("/runs/{run_id}", response_model=AgentRun, tags=["runs"])
@@ -138,44 +142,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
 
         async def event_stream() -> AsyncIterator[str]:
+            delivered_ids: set[int] = set()
+            for event in repository.list_events(run_id):
+                event_id = int(event.data.get("event_id", 0))
+                delivered_ids.add(event_id)
+                yield f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
             async for event in broker.subscribe(run_id):
                 if await request.is_disconnected():
                     break
+                event_id = int(event.data.get("event_id", 0))
+                if event_id and event_id in delivered_ids:
+                    continue
+                if event_id:
+                    delivered_ids.add(event_id)
                 yield f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     @app.post("/runs/{run_id}/cancel", status_code=status.HTTP_202_ACCEPTED, tags=["runs"])
     async def cancel_run(run_id: UUID, _: None = Depends(require_api_token)) -> dict[str, str]:
-        run = repository.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
-        if run.state in {
-            AgentState.COMPLETE,
-            AgentState.PARTIAL,
-            AgentState.FAILED,
-            AgentState.CANCELLED,
-        }:
+        try:
+            lifecycle.request_cancellation(run_id)
+        except LifecycleError as error:
+            detail = str(error)
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="Run is already terminal."
-            )
-        return {"status": "accepted", "detail": "Cancellation will be handled by the runtime loop."}
+                status_code=status.HTTP_404_NOT_FOUND
+                if detail == "Run not found."
+                else status.HTTP_409_CONFLICT,
+                detail=detail,
+            ) from error
+        await publish_latest_event(run_id)
+        return {"status": "accepted", "detail": "Cancellation was persisted for the runtime loop."}
 
     @app.post("/runs/{run_id}/authorize", status_code=status.HTTP_202_ACCEPTED, tags=["runs"])
     async def authorize_run(
         run_id: UUID, decision: AuthorizationDecision, _: None = Depends(require_api_token)
     ) -> dict[str, object]:
-        if repository.get_run(run_id) is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
-        return {"status": "accepted", "approved": decision.approved}
+        try:
+            updated = lifecycle.resolve_authorization(run_id, approved=decision.approved)
+        except LifecycleError as error:
+            detail = str(error)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND
+                if detail == "Run not found."
+                else status.HTTP_409_CONFLICT,
+                detail=detail,
+            ) from error
+        await publish_latest_event(run_id)
+        return {"status": "accepted", "approved": decision.approved, "state": updated.state.value}
 
     @app.get("/runs/{run_id}/pending-authorization", tags=["runs"])
     async def pending_authorization(
         run_id: UUID, _: None = Depends(require_api_token)
     ) -> dict[str, object]:
-        if repository.get_run(run_id) is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
-        return {"pending": False, "tool": None}
+        try:
+            pending = lifecycle.pending_authorization(run_id)
+        except LifecycleError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+        return {"pending": pending is not None, "tool": pending}
 
     @app.post("/runs/{run_id}/reply", status_code=status.HTTP_202_ACCEPTED, tags=["runs"])
     async def reply_to_run(
@@ -183,10 +207,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         if repository.get_run(run_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
+        repository.record_event(
+            AgentEvent(
+                run_id=run_id,
+                type="run.reply_received",
+                state=repository.get_run(run_id).state,
+                message="User reply persisted for runtime consumption.",
+                data={"message_length": len(reply.message)},
+            )
+        )
+        await publish_latest_event(run_id)
         return {"status": "accepted", "message_length": len(reply.message)}
 
     @app.get("/runs", response_model=list[AgentRun], tags=["runs"])
     async def list_runs(_: None = Depends(require_api_token)) -> list[AgentRun]:
-        return []
+        return repository.list_runs()
 
     return app
