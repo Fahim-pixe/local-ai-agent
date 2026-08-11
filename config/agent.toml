@@ -43,6 +43,10 @@ user = "10001:10001"
 tmpfs_size = "16m"
 read_only_root = true
 
+[filesystem]
+max_read_bytes = 65536
+max_list_entries = 1000
+
 [tool_policy]
 workspace_only = true
 shell_allowlist = ["python", "python3", "pytest", "pip", "git", "npm", "node", "npx", "ls", "cat", "echo", "grep", "find"]

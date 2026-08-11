@@ -2,7 +2,7 @@
 
 A **contract-first, local-first** autonomous agent runtime. The local model decides what to do; the Python runtime validates whether it is allowed; tools run only through runtime policy; SQLite records the authoritative state.
 
-> **Current status:** This repository is initialized as the secure foundation for the engineering specification. It provides typed contracts, state transitions, output validation, SQLite bootstrap, workspace boundaries, FastAPI lifecycle scaffolding, local Ollama integration boundaries, a configuration-driven Docker sandbox executor, and focused tests. The complete execution loop and tool implementations are intentionally next-phase work.
+> **Current status:** This repository is initialized as the secure foundation for the engineering specification. It provides typed contracts, state transitions, output validation, SQLite bootstrap, workspace boundaries, a minimal native-Ollama ReAct loop with verified read-only filesystem tools, FastAPI lifecycle scaffolding, a configuration-driven Docker sandbox executor, and focused tests. Durable run lifecycle behavior and higher-risk tools remain next-phase work.
 
 ## Architecture
 
@@ -23,6 +23,7 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Runtime state authority | `runtime/state_machine.py` enforces documented valid transitions. |
 | Model-output validation | `runtime/output_validator.py` rejects malformed plans and ambiguous tool-plus-answer turns. |
 | Plan and execution controls | `PlanTracker` owns dependency-safe plan steps; `ToolRouter` applies runtime argument validation, authorization, budgets, loop detection, handler execution, operation-aware verification, and retry decisions in fixed order. |
+| Minimal ReAct capability | `ReActLoop` uses Ollama native tool calls and returns only verified results from `filesystem.list_directory` and `filesystem.read_file` inside `workspace/project/`. |
 | Local model boundary | `runtime/ollama_client.py` uses native Ollama `tools` payloads and explicit local failure types. |
 | SQLite source of truth | `db/schema.py` creates runs, tool call/result, memory, event, backup, and FTS5 tables. |
 | Workspace isolation | `security/paths.py` resolves symlinks before containment checks. |
@@ -104,8 +105,8 @@ The repository deliberately keeps security decisions in the runtime layer. The f
 
 The next commits should follow the specification's trust-first order:
 
-1. Implement the **minimal ReAct loop** and read-only filesystem tools through the `ToolRegistry`.
-2. Register the first read-only filesystem tools with concrete validators and operation-specific verification functions, then invoke them through the implemented execution-control pipeline.
+1. Persist minimal ReAct run state, tool calls/results, verification evidence, and runtime events through the FastAPI lifecycle.
+2. Add cancellation, authorization pause/resume, per-session locking, and resume tokens around the persisted run loop.
 3. Add the execution pipeline around the Docker-backed executor: transactional writes, allowlist enforcement, secret scrubbing, and per-session locking.
 4. Add context assembly, memory persistence/retrieval, and local FTS5 indexing.
 5. Complete API lifecycle behavior, persistent SSE audit events, authorization pause/resume, and resume tokens.

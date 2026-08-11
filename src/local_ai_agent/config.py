@@ -65,6 +65,8 @@ class Settings:
     context_reserve_tokens: int
     recent_tool_results: int
     recent_conversation_messages: int
+    filesystem_max_read_bytes: int
+    filesystem_max_list_entries: int
     docker_binary: str
     docker_sandbox_image: str
     docker_sandbox_network: str
@@ -107,6 +109,7 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
     ollama = raw["ollama"]
     limits = raw["limits"]
     context = raw["context"]
+    filesystem = raw["filesystem"]
     sandbox = raw["sandbox"]
     workspace = raw["workspace"]
 
@@ -135,6 +138,12 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
         recent_tool_results=_env_int("RECENT_TOOL_RESULTS", context["recent_tool_results"]),
         recent_conversation_messages=_env_int(
             "RECENT_CONVERSATION", context["recent_conversation_messages"]
+        ),
+        filesystem_max_read_bytes=_env_int(
+            "FILESYSTEM_MAX_READ_BYTES", filesystem["max_read_bytes"]
+        ),
+        filesystem_max_list_entries=_env_int(
+            "FILESYSTEM_MAX_LIST_ENTRIES", filesystem["max_list_entries"]
         ),
         docker_binary=os.getenv("DOCKER_BINARY", sandbox["docker_binary"]),
         docker_sandbox_image=os.getenv("DOCKER_SANDBOX_IMAGE", sandbox["image"]),

@@ -35,6 +35,8 @@ def sandbox_settings(tmp_path: Path) -> Settings:
         context_reserve_tokens=500,
         recent_tool_results=3,
         recent_conversation_messages=5,
+        filesystem_max_read_bytes=65_536,
+        filesystem_max_list_entries=1_000,
         docker_binary="docker",
         docker_sandbox_image="local-ai-agent-sandbox:latest",
         docker_sandbox_network="none",
