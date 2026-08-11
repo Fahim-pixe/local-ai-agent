@@ -9,7 +9,8 @@ from typing import Any
 from local_ai_agent.schemas.contracts import RiskLevel, ToolResult, VerificationResult
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[ToolResult]]
-VerificationHandler = Callable[[ToolResult], Awaitable[VerificationResult]]
+VerificationHandler = Callable[[dict[str, Any], ToolResult], Awaitable[VerificationResult]]
+ArgumentsValidator = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,8 +20,12 @@ class ToolDefinition:
     input_schema: dict[str, Any]
     risk: RiskLevel
     handler: ToolHandler
-    verification: VerificationHandler
-    requires_authorization: bool = False
+    verification: VerificationHandler | None = None
+    arguments_validator: ArgumentsValidator | None = None
+
+    def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Apply the registered runtime validator; tool handlers never validate themselves."""
+        return self.arguments_validator(arguments) if self.arguments_validator else arguments
 
 
 class ToolRegistry:

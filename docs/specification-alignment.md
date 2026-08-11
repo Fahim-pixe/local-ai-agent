@@ -12,6 +12,8 @@ This initialization converts the supplied **Local AI Agent Architecture Specific
 | Pydantic `ToolResult` and verification distinction | `schemas/contracts.py` | Implemented |
 | State machine with valid transitions | `runtime/state_machine.py` | Implemented |
 | Output validator ahead of runtime actions | `runtime/output_validator.py` | Implemented |
+| PlanTracker with dependency-safe status progression | `runtime/plan_tracker.py` | Implemented |
+| Permission gating, budget enforcement, retries, loop blocking, and operation-aware verification | `runtime/permission_gate.py`, `budget_manager.py`, `retry_engine.py`, `loop_detector.py`, `verification_engine.py`, and `tool_router.py` | Implemented and unit-tested |
 | SQLite source of truth for runs, tools, results, events, memory, backups | `db/schema.py` and `db/repository.py` | Initialized |
 | SQLite FTS5 initial semantic-search path | `memory_fts` virtual table | Initialized |
 | Symlink-safe workspace enforcement | `security/paths.py` | Implemented foundation |
@@ -39,8 +41,8 @@ The initial commit does not pretend to implement the full autonomous runtime. Th
 
 | Deferred component | Reason for deferral |
 | --- | --- |
-| ReAct orchestration loop | Must be built atop the now-established schemas, state machine, and output validator. |
-| Filesystem and shell tool handlers | Require full policy pipeline, risk gating, backup semantics, and operation-aware verification. |
+| ReAct orchestration loop | Must invoke the now-established PlanTracker and ToolRouter around model-native tool requests. |
+| Filesystem and shell tool handlers | Must register concrete validators, handlers, and operation-specific verification functions with the implemented ToolRouter; write-capable operations also need backup semantics. |
 | Tool-pipeline integration around Docker | The executor is implemented, but future tool handlers still need allowlisting, authorization, backups, verification, audit persistence, and transactional rollback before delegation. |
 | Persistent event audit and session lock enforcement | Require full lifecycle transitions and transaction management. |
 | Memory indexing/retrieval and context compression | Need deliberate chunking, confidence, staleness, and token-budget semantics. |

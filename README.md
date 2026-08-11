@@ -22,6 +22,7 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Typed tool contract | `schemas/contracts.py` provides Pydantic `ToolResult`, `VerificationResult`, plans, budgets, runs, and events. |
 | Runtime state authority | `runtime/state_machine.py` enforces documented valid transitions. |
 | Model-output validation | `runtime/output_validator.py` rejects malformed plans and ambiguous tool-plus-answer turns. |
+| Plan and execution controls | `PlanTracker` owns dependency-safe plan steps; `ToolRouter` applies runtime argument validation, authorization, budgets, loop detection, handler execution, operation-aware verification, and retry decisions in fixed order. |
 | Local model boundary | `runtime/ollama_client.py` uses native Ollama `tools` payloads and explicit local failure types. |
 | SQLite source of truth | `db/schema.py` creates runs, tool call/result, memory, event, backup, and FTS5 tables. |
 | Workspace isolation | `security/paths.py` resolves symlinks before containment checks. |
@@ -104,7 +105,7 @@ The repository deliberately keeps security decisions in the runtime layer. The f
 The next commits should follow the specification's trust-first order:
 
 1. Implement the **minimal ReAct loop** and read-only filesystem tools through the `ToolRegistry`.
-2. Add **permission gates, budgets, retries, argument-hash loop detection, and operation-aware verification** to the execution pipeline.
+2. Register the first read-only filesystem tools with concrete validators and operation-specific verification functions, then invoke them through the implemented execution-control pipeline.
 3. Add the execution pipeline around the Docker-backed executor: transactional writes, allowlist enforcement, secret scrubbing, and per-session locking.
 4. Add context assembly, memory persistence/retrieval, and local FTS5 indexing.
 5. Complete API lifecycle behavior, persistent SSE audit events, authorization pause/resume, and resume tokens.
