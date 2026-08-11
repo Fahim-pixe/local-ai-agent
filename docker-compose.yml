@@ -1,0 +1,19 @@
+services:
+  agent-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/app/config:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      WORKSPACE_ROOT: /workspace
+      SQLITE_PATH: /workspace/.agent/agent.db
+    restart: unless-stopped

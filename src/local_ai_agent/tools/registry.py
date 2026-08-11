@@ -1,0 +1,55 @@
+"""Machine-readable tool registration contracts for runtime-controlled execution."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
+
+from local_ai_agent.schemas.contracts import RiskLevel, ToolResult, VerificationResult
+
+ToolHandler = Callable[[dict[str, Any]], Awaitable[ToolResult]]
+VerificationHandler = Callable[[ToolResult], Awaitable[VerificationResult]]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolDefinition:
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    risk: RiskLevel
+    handler: ToolHandler
+    verification: VerificationHandler
+    requires_authorization: bool = False
+
+
+class ToolRegistry:
+    """Registry owned by Python, never by model-provided tool definitions."""
+
+    def __init__(self) -> None:
+        self._tools: dict[str, ToolDefinition] = {}
+
+    def register(self, definition: ToolDefinition) -> None:
+        if definition.name in self._tools:
+            raise ValueError(f"Tool already registered: {definition.name}")
+        self._tools[definition.name] = definition
+
+    def get(self, name: str) -> ToolDefinition:
+        try:
+            return self._tools[name]
+        except KeyError as error:
+            raise KeyError(f"Unknown tool: {name}") from error
+
+    def ollama_tools(self) -> list[dict[str, Any]]:
+        """Return the native Ollama tool-call schema, excluding runtime policy metadata."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": definition.name,
+                    "description": definition.description,
+                    "parameters": definition.input_schema,
+                },
+            }
+            for definition in self._tools.values()
+        ]

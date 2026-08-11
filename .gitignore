@@ -1,0 +1,43 @@
+# Environment and local credentials
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Runtime-owned workspace artifacts
+workspace/.agent/*
+!workspace/.agent/.gitkeep
+workspace/backups/*
+!workspace/backups/.gitkeep
+workspace/runs/*
+!workspace/runs/.gitkeep
+workspace/logs/*
+!workspace/logs/.gitkeep
+workspace/project/*
+!workspace/project/.gitkeep
+workspace/system/*
+!workspace/system/.gitkeep
+
+# SQLite generated files
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,44 @@
+[agent]
+name = "Local AI Agent"
+mission = "Execute approved local tasks with evidence-based, policy-enforced tool use."
+
+[ollama]
+base_url = "http://localhost:11434"
+model = "qwen3:8b"
+embedding_model = "nomic-embed-text"
+model_context_tokens = 32768
+request_timeout_seconds = 120
+
+[workspace]
+root = "./workspace"
+project_directory = "project"
+backups_directory = "backups"
+internal_directory = ".agent"
+runs_directory = "runs"
+logs_directory = "logs"
+system_directory = "system"
+
+[limits]
+default_max_tool_calls = 30
+default_max_runtime_seconds = 600
+default_max_shell_executions = 10
+default_max_retries = 3
+
+[context]
+reserve_tokens = 500
+recent_tool_results = 3
+recent_conversation_messages = 5
+rag_chunk_tokens = 512
+rag_chunk_overlap_tokens = 50
+rag_top_k = 5
+
+[sandbox]
+image = "local-ai-agent-sandbox:latest"
+network = "none"
+memory = "256m"
+cpus = 0.5
+read_only_root = true
+
+[tool_policy]
+workspace_only = true
+shell_allowlist = ["python", "python3", "pytest", "pip", "git", "npm", "node", "npx", "ls", "cat", "echo", "grep", "find"]
