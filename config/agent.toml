@@ -9,6 +9,9 @@ embedding_model = "nomic-embed-text"
 model_context_tokens = 32768
 request_timeout_seconds = 120
 
+[prompt]
+path = "config/system_prompt.md"
+
 [workspace]
 root = "./workspace"
 project_directory = "project"

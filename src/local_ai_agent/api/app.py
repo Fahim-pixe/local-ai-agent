@@ -17,6 +17,7 @@ from local_ai_agent.db.repository import RunRepository
 from local_ai_agent.runtime.continuation import ContinuationError
 from local_ai_agent.runtime.lifecycle import LifecycleError, RunLifecycleService, WorkspaceBusyError
 from local_ai_agent.runtime.ollama_client import OllamaClient, OllamaError
+from local_ai_agent.runtime.production_prompt import ProductionPromptError, load_production_prompt
 from local_ai_agent.runtime.secure_run_runtime import build_secure_run_runtime
 from local_ai_agent.schemas.contracts import (
     AgentEvent,
@@ -118,10 +119,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def create_run(
         payload: CreateRunRequest, _: None = Depends(require_api_token)
     ) -> AgentRun:
+        try:
+            prompt = load_production_prompt(runtime_settings)
+        except ProductionPromptError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Production system prompt is unavailable.",
+            ) from error
         run = AgentRun(
             objective=payload.objective,
             workspace_id=payload.workspace_id,
             budget=payload.budget or _default_budget(runtime_settings),
+            prompt_hash=prompt.sha256,
         )
         try:
             created = lifecycle.register_run(run)

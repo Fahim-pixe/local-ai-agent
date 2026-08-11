@@ -28,6 +28,7 @@ def sandbox_settings(tmp_path: Path) -> Settings:
         embedding_model="nomic-embed-text",
         model_context_tokens=32_768,
         agent_api_token=None,
+        system_prompt_path=tmp_path / "config" / "system_prompt.md",
         default_max_tool_calls=30,
         default_max_runtime_seconds=60,
         default_max_shell_executions=10,

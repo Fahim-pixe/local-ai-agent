@@ -2,13 +2,13 @@
 
 A **contract-first, local-first** autonomous agent runtime. The local model decides what to do; the Python runtime validates whether it is allowed; tools run only through runtime policy; SQLite records the authoritative state.
 
-> **Current status:** The contract-first foundation now includes checkpointed ReAct continuation, single-claim approved actions, transactional workspace mutation, verified memory lifecycle with FTS5 retrieval, priority-tiered context assembly, and sandboxed execution. Production prompt versioning and evaluation remain subsequent milestones.
+> **Current status:** The contract-first runtime now includes a versioned production system prompt, SHA-256 prompt provenance on each API-created run, native Ollama tool calls, checkpointed ReAct continuation, verified memory/context assembly, transactional workspace mutation, and sandboxed execution. An opt-in local Qwen3 coding corpus validates the complete path when Ollama is available.
 
 ## Architecture
 
 | Layer | Responsibility |
 | --- | --- |
-| Local model | Qwen proposes plans and native Ollama tool calls. It never directly executes tools. |
+| Local model | Qwen receives the versioned production prompt and proposes native Ollama tool calls. It never directly executes tools. |
 | Python runtime | Enforces state transitions, schema validation, budgets, policy, authorization, verification, retry, and audit. |
 | Tool registry | Defines runtime-owned tool schemas, risk levels, handlers, and verification functions. |
 | FastAPI control plane | Exposes run lifecycle routes and SSE-ready event streaming. |
@@ -33,6 +33,7 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Memory and retrieval | `MemoryRepository` upserts confidence-labeled records, promotes expired entries to `STALE`, and retrieves semantic/long-term memory through rebuilt-safe SQLite FTS5. |
 | Context assembly | `ContextManager` preserves P0 runtime state, keeps fitting P1 evidence and retrieved memory, truncates P2 history with line-range hints, and drops P3 duplicate/old verified outputs. |
 | Verified memory tool | `memory.store` is a registered medium-risk tool with secret redaction and retrieval-based verification. |
+| Production prompt provenance | `config/system_prompt.md` is loaded from the configured path and byte-hashed with SHA-256; every API-created run records the runtime-owned hash in SQLite. |
 | Durable ReAct continuation | Append-only message checkpoints bind high-risk requests to a single pending action, which must be approved, claimed once, executed, and replayed from the exact assistant turn. |
 | API lifecycle | `api/app.py` provides token-gated lifecycle endpoints, durable event history with SSE fanout, cancellation, authorization, replies, run listing, and approved-action continuation. |
 | Sandbox boundary | `runtime/docker_sandbox.py` owns a Docker invocation with no network, read-only root, dropped capabilities, no-new-privileges, resource limits, an unprivileged user, and one validated writable workspace mount. |
@@ -67,7 +68,10 @@ make lint
 # 5. With Docker running and the sandbox image built, execute the real isolation check.
 RUN_DOCKER_INTEGRATION=1 PYTHONPATH=src .venv/bin/pytest -m docker
 
-# 6. Start the FastAPI control plane.
+# 6. Run the opt-in real local-model coding evaluation after confirming Ollama and qwen3:8b are available.
+RUN_OLLAMA_EVALUATION=1 PYTHONPATH=src .venv/bin/pytest -m ollama
+
+# 7. Start the FastAPI control plane.
 make run
 ```
 
@@ -86,6 +90,7 @@ Versioned defaults belong in `config/agent.toml`. Secrets and environment-specif
 | Setting | Purpose |
 | --- | --- |
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | Local inference endpoint and Qwen model. |
+| `SYSTEM_PROMPT_PATH` | Optional override for the checked-in versioned production prompt source. |
 | `EMBEDDING_MODEL` | Local embedding model for the later RAG pipeline. |
 | `WORKSPACE_ROOT`, `SQLITE_PATH` | Isolated workspace and authoritative SQLite store. |
 | `DEFAULT_MAX_*` | Runtime budget ceilings for tools, duration, and shell actions. |
@@ -115,7 +120,7 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 The next commits should follow the specification's trust-first order:
 
 1. Add explicit run-worker orchestration, crash recovery classification, and richer continuation-state inspection.
-2. Add production system-prompt versioning, prompt hashing, and an end-to-end local coding-task evaluation corpus.
+2. Run and baseline the opt-in local Qwen3 coding corpus on target hardware before expanding its task set.
 3. Extend semantic memory with local embeddings only after evaluating the FTS5 baseline and preserving the current confidence/staleness model.
 4. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, independent verification, and audit coverage.
 

@@ -17,6 +17,7 @@ from local_ai_agent.runtime.lifecycle import LifecycleError, RunLifecycleService
 from local_ai_agent.runtime.loop_detector import LoopDetector
 from local_ai_agent.runtime.ollama_client import OllamaClient
 from local_ai_agent.runtime.permission_gate import PermissionGate
+from local_ai_agent.runtime.production_prompt import load_production_prompt
 from local_ai_agent.runtime.react_loop import NativeToolChatClient, ReActLoop, ReActLoopResult
 from local_ai_agent.runtime.retry_engine import RetryEngine
 from local_ai_agent.runtime.run_executor import RunToolExecutor
@@ -32,6 +33,7 @@ from local_ai_agent.tools.registry import ToolRegistry
 @dataclass(frozen=True, slots=True)
 class SecureRunRuntime:
     run_id: UUID
+    settings: Settings
     repository: RunRepository
     registry: ToolRegistry
     tool_router: ToolRouter
@@ -44,7 +46,7 @@ class SecureRunRuntime:
     async def run_with_context(
         self,
         *,
-        system_prompt: str,
+        system_prompt: str | None = None,
         recent_tool_results: list[ToolResult] | None = None,
         recent_conversation: list[dict[str, Any]] | None = None,
         completed_steps: list[str] | None = None,
@@ -54,6 +56,15 @@ class SecureRunRuntime:
         run = self.repository.get_run(self.run_id)
         if run is None:
             raise LifecycleError("Cannot run context assembly for a missing run.")
+        if system_prompt is None:
+            production_prompt = load_production_prompt(self.settings)
+            if run.prompt_hash is not None and production_prompt.sha256 != run.prompt_hash:
+                raise LifecycleError(
+                    "Configured production prompt hash does not match the hash persisted for this run."
+                )
+            selected_prompt = production_prompt.content
+        else:
+            selected_prompt = system_prompt
         plan_summary = None
         active_step = None
         if run.plan:
@@ -72,7 +83,7 @@ class SecureRunRuntime:
         )
         return await self.react_loop.run(
             objective=run.objective,
-            system_prompt=system_prompt,
+            system_prompt=selected_prompt,
             runtime_context=assembly.as_system_context(),
             checkpoint_sink=RepositoryCheckpointSink(
                 run_id=self.run_id, repository=self.repository
@@ -132,6 +143,7 @@ def build_secure_run_runtime(
     )
     return SecureRunRuntime(
         run_id=run_id,
+        settings=settings,
         repository=repository,
         registry=registry,
         tool_router=router,

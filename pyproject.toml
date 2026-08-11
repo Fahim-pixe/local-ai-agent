@@ -37,6 +37,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
   "docker: requires a locally available Docker engine and configured sandbox image",
+  "ollama: requires a locally available Ollama service, the configured Qwen model, and RUN_OLLAMA_EVALUATION=1",
 ]
 
 [tool.ruff]
