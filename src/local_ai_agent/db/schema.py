@@ -66,9 +66,7 @@ CREATE TABLE IF NOT EXISTS memories (
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
     memory_key,
-    value,
-    content='memories',
-    content_rowid='id'
+    value
 );
 
 CREATE TABLE IF NOT EXISTS agent_events (
@@ -109,6 +107,15 @@ CREATE TABLE IF NOT EXISTS session_locks (
 
 
 def initialize_database(connection: sqlite3.Connection) -> None:
-    """Create the complete initial schema in one transaction."""
+    """Create the schema and rebuild legacy external-content FTS indexes safely."""
     with connection:
         connection.executescript(SCHEMA_SQL)
+        definition = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'memory_fts'"
+        ).fetchone()[0]
+        if "content='memories'" in definition.replace(" ", ""):
+            connection.execute("DROP TABLE memory_fts")
+            connection.execute("CREATE VIRTUAL TABLE memory_fts USING fts5(memory_key, value)")
+            connection.execute(
+                "INSERT INTO memory_fts (rowid, memory_key, value) SELECT id, memory_key, value FROM memories"
+            )

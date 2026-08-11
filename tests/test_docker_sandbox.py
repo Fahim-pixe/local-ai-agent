@@ -35,6 +35,10 @@ def sandbox_settings(tmp_path: Path) -> Settings:
         context_reserve_tokens=500,
         recent_tool_results=3,
         recent_conversation_messages=5,
+        rag_chunk_tokens=512,
+        rag_chunk_overlap_tokens=50,
+        rag_top_k=5,
+        context_chars_per_token=4,
         filesystem_max_read_bytes=65_536,
         filesystem_max_list_entries=1_000,
         shell_allowlist=(

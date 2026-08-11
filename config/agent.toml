@@ -31,6 +31,7 @@ recent_conversation_messages = 5
 rag_chunk_tokens = 512
 rag_chunk_overlap_tokens = 50
 rag_top_k = 5
+chars_per_token = 4
 
 [sandbox]
 docker_binary = "docker"

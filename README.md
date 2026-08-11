@@ -2,7 +2,7 @@
 
 A **contract-first, local-first** autonomous agent runtime. The local model decides what to do; the Python runtime validates whether it is allowed; tools run only through runtime policy; SQLite records the authoritative state.
 
-> **Current status:** The contract-first foundation, minimal ReAct loop, durable run lifecycle, transactional workspace mutation, authorization controls, and sandboxed execution boundary are implemented. Context/memory retrieval, resume replay, and broader production evaluation remain subsequent milestones.
+> **Current status:** The contract-first foundation now includes a minimal ReAct loop, durable lifecycle controls, transactional workspace mutation, verified memory lifecycle with FTS5 retrieval, priority-tiered context assembly, and sandboxed execution. Durable resume replay and production evaluation remain subsequent milestones.
 
 ## Architecture
 
@@ -30,6 +30,9 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Durable lifecycle and concurrency | `RunLifecycleService` persists state transitions, audit events, cancellation requests, authorization pauses, and a per-workspace SQLite lock. |
 | Transactional mutations | `TransactionManager` snapshots regular files, atomically writes or deletes, verifies outcomes, and rolls back failed operations. |
 | Secure tool surface | `filesystem.write_file`, `filesystem.delete_file`, `shell.execute`, and `python.execute` are risk-classified, verified, audited, and gated by runtime policy. |
+| Memory and retrieval | `MemoryRepository` upserts confidence-labeled records, promotes expired entries to `STALE`, and retrieves semantic/long-term memory through rebuilt-safe SQLite FTS5. |
+| Context assembly | `ContextManager` preserves P0 runtime state, keeps fitting P1 evidence and retrieved memory, truncates P2 history with line-range hints, and drops P3 duplicate/old verified outputs. |
+| Verified memory tool | `memory.store` is a registered medium-risk tool with secret redaction and retrieval-based verification. |
 | API lifecycle | `api/app.py` provides token-gated lifecycle endpoints, durable event history with SSE fanout, cancellation, authorization, replies, and run listing. |
 | Sandbox boundary | `runtime/docker_sandbox.py` owns a Docker invocation with no network, read-only root, dropped capabilities, no-new-privileges, resource limits, an unprivileged user, and one validated writable workspace mount. |
 
@@ -85,6 +88,7 @@ Versioned defaults belong in `config/agent.toml`. Secrets and environment-specif
 | `EMBEDDING_MODEL` | Local embedding model for the later RAG pipeline. |
 | `WORKSPACE_ROOT`, `SQLITE_PATH` | Isolated workspace and authoritative SQLite store. |
 | `DEFAULT_MAX_*` | Runtime budget ceilings for tools, duration, and shell actions. |
+| `RAG_*`, `CONTEXT_CHARS_PER_TOKEN` | FTS retrieval count and token-estimation/truncation controls for assembled runtime context. |
 | `DOCKER_SANDBOX_*` | Mandatory resource, user, filesystem, and network restrictions for sandboxed high-risk tools. |
 | `AGENT_API_TOKEN` | Bearer token for run lifecycle endpoints. |
 
@@ -108,9 +112,9 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 
 The next commits should follow the specification's trust-first order:
 
-1. Add context assembly, memory persistence/retrieval, stale-memory policy, and local FTS5 indexing.
-2. Add durable ReAct resume replay, pending-action execution after authorization, and explicit run-worker orchestration.
-3. Add production system-prompt versioning, prompt hashing, and end-to-end coding-task evaluation.
+1. Add durable ReAct resume replay, pending-action execution after authorization, and explicit run-worker orchestration.
+2. Add production system-prompt versioning, prompt hashing, and an end-to-end local coding-task evaluation corpus.
+3. Extend semantic memory with local embeddings only after evaluating the FTS5 baseline and preserving the current confidence/staleness model.
 4. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, independent verification, and audit coverage.
 
 See [`docs/specification-alignment.md`](docs/specification-alignment.md) for the setup-to-specification mapping.

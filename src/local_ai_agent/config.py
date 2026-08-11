@@ -65,6 +65,10 @@ class Settings:
     context_reserve_tokens: int
     recent_tool_results: int
     recent_conversation_messages: int
+    rag_chunk_tokens: int
+    rag_chunk_overlap_tokens: int
+    rag_top_k: int
+    context_chars_per_token: int
     filesystem_max_read_bytes: int
     filesystem_max_list_entries: int
     shell_allowlist: tuple[str, ...]
@@ -141,6 +145,12 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
         recent_conversation_messages=_env_int(
             "RECENT_CONVERSATION", context["recent_conversation_messages"]
         ),
+        rag_chunk_tokens=_env_int("RAG_CHUNK_TOKENS", context["rag_chunk_tokens"]),
+        rag_chunk_overlap_tokens=_env_int(
+            "RAG_CHUNK_OVERLAP_TOKENS", context["rag_chunk_overlap_tokens"]
+        ),
+        rag_top_k=_env_int("RAG_TOP_K", context["rag_top_k"]),
+        context_chars_per_token=_env_int("CONTEXT_CHARS_PER_TOKEN", context["chars_per_token"]),
         filesystem_max_read_bytes=_env_int(
             "FILESYSTEM_MAX_READ_BYTES", filesystem["max_read_bytes"]
         ),

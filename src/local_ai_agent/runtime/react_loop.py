@@ -64,12 +64,14 @@ class ReActLoop:
         self._registry = registry
         self._tool_router = tool_router
 
-    async def run(self, *, objective: str, system_prompt: str) -> ReActLoopResult:
+    async def run(
+        self, *, objective: str, system_prompt: str, runtime_context: str | None = None
+    ) -> ReActLoopResult:
         """Execute one bounded ReAct run until final content, pause, failure, or turn limit."""
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": objective},
-        ]
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        if runtime_context:
+            messages.append({"role": "system", "content": runtime_context})
+        messages.append({"role": "user", "content": objective})
         outcomes: list[ToolRoutingOutcome] = []
         max_turns = self._settings.default_max_tool_calls + 1
 

@@ -48,6 +48,28 @@ class ConfidenceLevel(StrEnum):
     STALE = "STALE"
 
 
+class MemoryCategory(StrEnum):
+    PREFERENCE = "PREFERENCE"
+    FACT = "FACT"
+    TASK_OUTCOME = "TASK_OUTCOME"
+    SEMANTIC = "SEMANTIC"
+
+
+class MemoryRecord(BaseModel):
+    """Durable memory with confidence, provenance, and staleness metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    category: MemoryCategory
+    key: str = Field(min_length=1, max_length=512)
+    value: str = Field(min_length=1, max_length=50_000)
+    confidence: ConfidenceLevel = ConfidenceLevel.POSSIBLE
+    source_run_id: UUID | None = None
+    expires_at: datetime | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class VerificationResult(BaseModel):
     """Evidence that distinguishes execution success from verified success."""
 
