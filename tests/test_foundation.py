@@ -46,7 +46,12 @@ def test_workspace_boundary_resolves_symlink_escape(tmp_path: Path) -> None:
     workspace.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
-    (workspace / "escape").symlink_to(outside, target_is_directory=True)
+    try:
+        (workspace / "escape").symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows symlink creation requires Developer Mode or elevated privileges.")
+        raise
 
     with pytest.raises(WorkspacePolicyError):
         resolve_workspace_path(workspace_project=workspace, candidate="escape/private.txt")

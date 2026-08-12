@@ -37,11 +37,12 @@ class RecordingNativeToolClient:
 def configured_settings(tmp_path: Path):
     prompt_path = tmp_path / "config" / "system_prompt.md"
     prompt_path.parent.mkdir(parents=True)
-    prompt_path.write_text("# Production Prompt v1\n\nUse verified tools only.\n", encoding="utf-8")
+    prompt_path.write_bytes(b"# Production Prompt v1\n\nUse verified tools only.\n")
     settings = replace(
         load_settings(),
         workspace_root=tmp_path / "workspace",
         sqlite_path=tmp_path / "workspace" / ".agent" / "agent.db",
+        agent_api_token=None,
         system_prompt_path=prompt_path,
     )
     ensure_workspace(settings)
@@ -63,9 +64,7 @@ def test_versioned_production_prompt_loads_content_and_sha256_from_configured_pa
 
 def test_production_prompt_renders_toml_identity_before_hashing(tmp_path: Path) -> None:
     settings = configured_settings(tmp_path)
-    settings.system_prompt_path.write_text(
-        "# {{AGENT_NAME}}\n\nMission: {{AGENT_MISSION}}\n", encoding="utf-8"
-    )
+    settings.system_prompt_path.write_bytes(b"# {{AGENT_NAME}}\n\nMission: {{AGENT_MISSION}}\n")
 
     prompt = load_production_prompt(settings)
 

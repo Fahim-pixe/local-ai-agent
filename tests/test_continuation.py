@@ -20,6 +20,7 @@ def configured_settings(tmp_path: Path):
         load_settings(),
         workspace_root=tmp_path / "workspace",
         sqlite_path=tmp_path / "workspace" / ".agent" / "agent.db",
+        agent_api_token=None,
     )
     ensure_workspace(settings)
     return settings
