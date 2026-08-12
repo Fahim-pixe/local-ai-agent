@@ -33,9 +33,9 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Memory and retrieval | `MemoryRepository` upserts confidence-labeled records, promotes expired entries to `STALE`, and retrieves semantic/long-term memory through rebuilt-safe SQLite FTS5. |
 | Context assembly | `ContextManager` preserves P0 runtime state, keeps fitting P1 evidence and retrieved memory, truncates P2 history with line-range hints, and drops P3 duplicate/old verified outputs. |
 | Verified memory tool | `memory.store` is a registered medium-risk tool with secret redaction and retrieval-based verification. |
-| Production prompt provenance | `config/system_prompt.md` is loaded from the configured path and byte-hashed with SHA-256; every API-created run records the runtime-owned hash in SQLite. |
+| Production prompt provenance | `config/agent.toml` provides agent name and mission, which render into `config/system_prompt.md` before SHA-256 hashing; every API-created run records the exact runtime-owned prompt hash in SQLite. |
 | Durable ReAct continuation | Append-only message checkpoints bind high-risk requests to a single pending action, which must be approved, claimed once, executed, and replayed from the exact assistant turn. |
-| API lifecycle | `api/app.py` provides token-gated lifecycle endpoints, durable event history with SSE fanout, cancellation, authorization, replies, run listing, and approved-action continuation. |
+| API lifecycle | `api/app.py` provides token-gated lifecycle endpoints, durable event history with SSE fanout, cancellation, authorization, replies, run listing, approved-action continuation, and resume-token validation. |
 | Sandbox boundary | `runtime/docker_sandbox.py` owns a Docker invocation with no network, read-only root, dropped capabilities, no-new-privileges, resource limits, an unprivileged user, and one validated writable workspace mount. |
 
 ## Prerequisites
@@ -69,7 +69,7 @@ make lint
 RUN_DOCKER_INTEGRATION=1 PYTHONPATH=src .venv/bin/pytest -m docker
 
 # 6. Run the opt-in real local-model coding evaluation after confirming Ollama and qwen3:8b are available.
-RUN_OLLAMA_EVALUATION=1 PYTHONPATH=src .venv/bin/pytest -m ollama
+make test-ollama
 
 # 7. Start the FastAPI control plane.
 make run
@@ -90,6 +90,7 @@ Versioned defaults belong in `config/agent.toml`. Secrets and environment-specif
 | Setting | Purpose |
 | --- | --- |
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | Local inference endpoint and Qwen model. |
+| `AGENT_NAME`, `AGENT_MISSION` | Optional overrides for the canonical versioned `[agent]` identity in `config/agent.toml`; rendered into the production prompt before hashing. |
 | `SYSTEM_PROMPT_PATH` | Optional override for the checked-in versioned production prompt source. |
 | `EMBEDDING_MODEL` | Local embedding model for the later RAG pipeline. |
 | `WORKSPACE_ROOT`, `SQLITE_PATH` | Isolated workspace and authoritative SQLite store. |
@@ -111,6 +112,7 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 | `POST` | `/runs/{run_id}/cancel` | Persists cancellation for the execution boundary to honor before the next tool. |
 | `POST` | `/runs/{run_id}/authorize` | Resolves an explicit pending authorization and marks its checkpoint-linked action approved or rejected. |
 | `POST` | `/runs/{run_id}/continue` | Atomically claims one approved action, executes it through the secure tool path, checkpoints the result, and replays the stored ReAct conversation. |
+| `POST` | `/runs/{run_id}/resume` | Requires the run’s persisted `resume_token` and then atomically resumes one approved checkpointed action. |
 | `GET` | `/runs/{run_id}/pending-authorization` | Returns the sanitized persisted pending tool action, when present. |
 | `POST` | `/runs/{run_id}/reply` | Persists a user reply event for a paused runtime. |
 | `GET` | `/runs` | Returns recent persisted runs. |

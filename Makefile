@@ -1,7 +1,7 @@
 PYTHON ?= python3.12
 VENV ?= .venv
 
-.PHONY: setup bootstrap test test-docker lint format run health sandbox-image compose-up compose-down
+.PHONY: setup bootstrap test test-docker test-ollama lint format run health sandbox-image compose-up compose-down
 
 setup:
 	$(PYTHON) -m venv $(VENV)
@@ -17,6 +17,9 @@ test:
 
 test-docker:
 	RUN_DOCKER_INTEGRATION=1 $(VENV)/bin/pytest -m docker
+
+test-ollama:
+	RUN_OLLAMA_EVALUATION=1 PYTHONPATH=src $(VENV)/bin/pytest -m ollama
 
 lint:
 	$(VENV)/bin/ruff check src tests

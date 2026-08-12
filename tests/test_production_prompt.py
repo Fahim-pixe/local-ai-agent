@@ -61,6 +61,21 @@ def test_versioned_production_prompt_loads_content_and_sha256_from_configured_pa
     assert prompt.sha256 == hashlib.sha256(expected_content.encode("utf-8")).hexdigest()
 
 
+def test_production_prompt_renders_toml_identity_before_hashing(tmp_path: Path) -> None:
+    settings = configured_settings(tmp_path)
+    settings.system_prompt_path.write_text(
+        "# {{AGENT_NAME}}\n\nMission: {{AGENT_MISSION}}\n", encoding="utf-8"
+    )
+
+    prompt = load_production_prompt(settings)
+
+    expected_content = f"# {settings.agent_name}\n\nMission: {settings.agent_mission}\n"
+    assert prompt.content == expected_content
+    assert prompt.sha256 == hashlib.sha256(expected_content.encode("utf-8")).hexdigest()
+    assert "{{AGENT_NAME}}" not in prompt.content
+    assert "{{AGENT_MISSION}}" not in prompt.content
+
+
 def test_secure_runtime_uses_configured_production_prompt_and_native_tool_schemas(
     tmp_path: Path,
 ) -> None:

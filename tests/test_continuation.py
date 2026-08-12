@@ -193,3 +193,50 @@ def test_api_continuation_rejects_runs_without_an_approved_action(tmp_path: Path
 
     assert resumed.status_code == 409
     assert "No approved pending action" in resumed.json()["detail"]
+
+
+def test_api_resume_token_validates_before_continuing_an_approved_action(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from local_ai_agent.api.app import create_app
+
+    settings = configured_settings(tmp_path)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        created = client.post(
+            "/runs",
+            json={"objective": "Remove obsolete file.", "workspace_id": "api-resume-token"},
+        )
+        assert created.status_code == 202
+        payload = created.json()
+        run = app.state.repository.get_run(UUID(payload["id"]))
+        assert run is not None
+        transition_to_execute(app.state.lifecycle, run)
+        target = settings.workspace_project_path / "obsolete.txt"
+        target.write_text("remove me", encoding="utf-8")
+        native_client = SequencedNativeClient()
+        runtime = build_secure_run_runtime(
+            settings=settings,
+            run_id=run.id,
+            repository=app.state.repository,
+            lifecycle=app.state.lifecycle,
+            client=native_client,
+        )
+        app.state.runtime_builder = lambda **_: runtime
+        paused = asyncio.run(runtime.run_with_context(system_prompt="Use tools."))
+        assert paused.state is AgentState.AUTHORIZATION_REQUIRED
+        approved = client.post(f"/runs/{run.id}/authorize", json={"approved": True})
+        assert approved.status_code == 202
+
+        rejected = client.post(
+            f"/runs/{run.id}/resume", json={"resume_token": "00000000-0000-0000-0000-000000000000"}
+        )
+        resumed = client.post(
+            f"/runs/{run.id}/resume", json={"resume_token": payload["resume_token"]}
+        )
+
+    assert rejected.status_code == 403
+    assert resumed.status_code == 202
+    assert resumed.json()["action_verified"] is True
+    assert resumed.json()["react_state"] == "COMPLETE"
+    assert not target.exists()

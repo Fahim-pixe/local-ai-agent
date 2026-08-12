@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from secrets import compare_digest
 from typing import Any
 from uuid import UUID
 
@@ -151,6 +152,13 @@ class RunLifecycleService:
             "Authorization denied; the pending tool operation was not executed.",
             {"tool_name": pending["tool_name"]},
         )
+
+    def require_valid_resume_token(self, run_id: UUID, resume_token: UUID) -> AgentRun:
+        """Return the run only when the caller presents its persisted resume token."""
+        run = self._require_run(run_id)
+        if not compare_digest(str(run.resume_token), str(resume_token)):
+            raise LifecycleError("Invalid resume token.")
+        return run
 
     def pending_authorization(self, run_id: UUID) -> dict[str, Any] | None:
         self._require_run(run_id)

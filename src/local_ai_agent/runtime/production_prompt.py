@@ -32,11 +32,16 @@ def load_production_prompt(settings: Settings) -> ProductionSystemPrompt:
     if not raw_content.strip():
         raise ProductionPromptError("Configured system prompt must not be empty.")
     try:
-        content = raw_content.decode("utf-8")
+        template = raw_content.decode("utf-8")
     except UnicodeDecodeError as error:
         raise ProductionPromptError("Configured system prompt must be UTF-8 text.") from error
+    content = template.replace("{{AGENT_NAME}}", settings.agent_name).replace(
+        "{{AGENT_MISSION}}", settings.agent_mission
+    )
+    if not content.strip():
+        raise ProductionPromptError("Rendered production system prompt must not be empty.")
     return ProductionSystemPrompt(
         content=content,
-        sha256=hashlib.sha256(raw_content).hexdigest(),
+        sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
         source_path=source_path,
     )

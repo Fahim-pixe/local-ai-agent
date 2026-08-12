@@ -16,7 +16,7 @@ This repository maps the supplied **Local AI Agent Architecture Specification v2
 | Minimal native-Ollama ReAct loop with low-risk filesystem reads | `runtime/react_loop.py`, `runtime/minimal_runtime.py`, and `tools/filesystem.py` | Implemented and unit-tested |
 | Permission gating, budget enforcement, retries, loop blocking, and operation-aware verification | `runtime/permission_gate.py`, `budget_manager.py`, `retry_engine.py`, `loop_detector.py`, `verification_engine.py`, and `tool_router.py` | Implemented and unit-tested |
 | SQLite source of truth for runs, tools, results, events, memory, backups | `db/schema.py` and `db/repository.py` | Implemented for runs, events, tool audit, backups, cancellation, authorization, and session locks |
-| Durable lifecycle, cancellation, authorization, and per-session lock | `runtime/lifecycle.py`, `runtime/run_executor.py`, and SQLite `run_controls` / `session_locks` | Implemented and API-tested |
+| Durable lifecycle, cancellation, authorization, per-session lock, and resume token | `runtime/lifecycle.py`, `runtime/run_executor.py`, SQLite `run_controls` / `session_locks`, and `POST /runs/{id}/resume` | Implemented and API-tested; the resume route requires constant-time validation of the persisted run token before durable continuation |
 | Transactional writes and deletes | `runtime/transaction_manager.py` and `tools/mutation.py` | Implemented with snapshots, atomic writes, independent verification, and rollback tests |
 | Command policy and output secret scrubbing | `security/command_policy.py` and `security/output_scrubber.py` | Implemented and tested |
 | Sandboxed high-risk execution tools | `shell.execute` and `python.execute` through `tools/mutation.py` and `runtime/docker_sandbox.py` | Implemented; explicit authorization and command policy required |
@@ -27,9 +27,9 @@ This repository maps the supplied **Local AI Agent Architecture Specification v2
 | Symlink-safe workspace enforcement | `security/paths.py` | Implemented foundation |
 | Docker as tool sandbox boundary | `runtime/docker_sandbox.py`, `docker/sandbox/Dockerfile`, and centrally validated sandbox settings | Implemented and integration-tested |
 | Durable ReAct checkpoints and pending actions | `react_checkpoints`, `pending_actions`, `runtime/checkpointing.py`, and `runtime/continuation.py` | Implemented with append-only messages, approval, single claim, execution result checkpointing, and exact replay |
-| API lifecycle + SSE | `api/app.py` | Implemented with durable creation, cancellation, authorization, replies, listing, historical events, live SSE notifications, `POST /runs/{id}/continue`, and runtime-owned prompt hashing at run creation |
-| Versioned production prompt and SHA-256 provenance | `config/system_prompt.md`, `runtime/production_prompt.py`, `Settings.system_prompt_path`, and `agent_runs.prompt_hash` | Implemented; the configured UTF-8 prompt is byte-hashed and persisted for every API-created run |
-| Opt-in end-to-end local coding evaluation | `evaluation/coding_tasks.py` and `tests/test_coding_evaluation.py` | Implemented for list, read, and write scenarios; it grades durable verified tool evidence and deterministic workspace outcomes when `RUN_OLLAMA_EVALUATION=1` |
+| API lifecycle + SSE | `api/app.py` | Implemented with durable creation, cancellation, authorization, replies, listing, historical events, live SSE notifications, approved-action continuation, and token-validated `POST /runs/{id}/resume` |
+| Versioned production prompt and SHA-256 provenance | `config/agent.toml`, `config/system_prompt.md`, `runtime/production_prompt.py`, `Settings`, and `agent_runs.prompt_hash` | Implemented; TOML-backed name and mission render into the UTF-8 prompt before its exact message bytes are hashed and persisted for every API-created run |
+| Opt-in end-to-end local coding evaluation | `evaluation/coding_tasks.py`, `tests/test_coding_evaluation.py`, and `make test-ollama` | Implemented for list, read, and write scenarios; it grades durable verified tool evidence and deterministic workspace outcomes when `RUN_OLLAMA_EVALUATION=1` |
 | Environment-controlled paths, models, budgets, limits | `config/agent.toml` and `.env.example` | Ready |
 | Contract, boundary, and persistence tests | `tests/test_foundation.py` | Ready |
 

@@ -29,6 +29,11 @@ def _env_float(name: str, default: float) -> float:
     return float(value) if value is not None else default
 
 
+def _env_str(name: str, default: str) -> str:
+    value = os.getenv(name)
+    return value if value is not None else default
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -58,6 +63,8 @@ class Settings:
     embedding_model: str
     model_context_tokens: int
     agent_api_token: str | None
+    agent_name: str
+    agent_mission: str
     system_prompt_path: Path
     default_max_tool_calls: int
     default_max_runtime_seconds: int
@@ -120,6 +127,7 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
     sandbox = raw["sandbox"]
     workspace = raw["workspace"]
     prompt = raw["prompt"]
+    agent = raw["agent"]
 
     project_root = PROJECT_ROOT
     workspace_root = _env_path("WORKSPACE_ROOT", project_root / workspace["root"])
@@ -134,6 +142,8 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
         embedding_model=os.getenv("EMBEDDING_MODEL", ollama["embedding_model"]),
         model_context_tokens=_env_int("MODEL_CONTEXT_TOKENS", ollama["model_context_tokens"]),
         agent_api_token=os.getenv("AGENT_API_TOKEN"),
+        agent_name=_env_str("AGENT_NAME", agent["name"]),
+        agent_mission=_env_str("AGENT_MISSION", agent["mission"]),
         system_prompt_path=_env_path("SYSTEM_PROMPT_PATH", project_root / prompt["path"]),
         default_max_tool_calls=_env_int("DEFAULT_MAX_TOOL_CALLS", limits["default_max_tool_calls"]),
         default_max_runtime_seconds=_env_int(

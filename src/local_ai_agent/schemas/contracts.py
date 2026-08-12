@@ -142,6 +142,14 @@ class AuthorizationDecision(BaseModel):
     reason: str | None = Field(default=None, max_length=2_000)
 
 
+class ResumeRunRequest(BaseModel):
+    """Proof of possession for resuming a durable run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    resume_token: UUID
+
+
 class UserReplyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

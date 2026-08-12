@@ -24,6 +24,7 @@ from local_ai_agent.schemas.contracts import (
     AgentRun,
     AuthorizationDecision,
     CreateRunRequest,
+    ResumeRunRequest,
     RunBudget,
     UserReplyRequest,
 )
@@ -207,6 +208,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def continue_run(run_id: UUID, _: None = Depends(require_api_token)) -> dict[str, object]:
         if repository.get_run(run_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
+        try:
+            runtime = app.state.runtime_builder(
+                settings=runtime_settings,
+                run_id=run_id,
+                repository=repository,
+                lifecycle=lifecycle,
+            )
+            result = await runtime.continuation.resume_approved_action()
+        except ContinuationError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        await publish_latest_event(run_id)
+        return {
+            "status": "completed",
+            "action_id": str(result.action.id),
+            "tool_name": result.action.tool_name,
+            "action_verified": result.action_outcome.result.verified,
+            "react_state": result.react_result.state.value,
+            "final_response": result.react_result.final_response,
+        }
+
+    @app.post("/runs/{run_id}/resume", status_code=status.HTTP_202_ACCEPTED, tags=["runs"])
+    async def resume_run(
+        run_id: UUID, payload: ResumeRunRequest, _: None = Depends(require_api_token)
+    ) -> dict[str, object]:
+        try:
+            lifecycle.require_valid_resume_token(run_id, payload.resume_token)
+        except LifecycleError as error:
+            detail = str(error)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND
+                if detail == "Run not found."
+                else status.HTTP_403_FORBIDDEN,
+                detail=detail,
+            ) from error
         try:
             runtime = app.state.runtime_builder(
                 settings=runtime_settings,
