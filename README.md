@@ -34,7 +34,7 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Context assembly | `ContextManager` preserves P0 runtime state, keeps fitting P1 evidence and retrieved memory, truncates P2 history with line-range hints, and drops P3 duplicate/old verified outputs. |
 | Verified memory tool | `memory.store` is a registered medium-risk tool with secret redaction and retrieval-based verification. |
 | Production prompt provenance | `config/agent.toml` provides agent name and mission, which render into `config/system_prompt.md` before SHA-256 hashing; every API-created run records the exact runtime-owned prompt hash in SQLite. |
-| Durable ReAct continuation and dispatch | Append-only message checkpoints bind high-risk requests to a single pending action. A configuration-gated bounded local worker pool can register, heartbeat, atomically claim, and execute one owned action; all current tools are `NEVER_RECLAIM`, so expired `EXECUTING` work fails safely rather than being re-executed. |
+| Durable ReAct continuation and dispatch | Append-only message checkpoints bind high-risk requests to a single pending action. When explicitly enabled, the API supervises a bounded set of independent local worker processes that register, heartbeat, atomically claim, and execute one owned action; all current tools are `NEVER_RECLAIM`, so expired `EXECUTING` work fails safely rather than being re-executed. |
 | API lifecycle | `api/app.py` provides token-gated lifecycle endpoints, durable event history with SSE fanout, cancellation, authorization, replies, run listing, approved-action continuation, and resume-token validation. |
 | Sandbox boundary | `runtime/docker_sandbox.py` owns a Docker invocation with no network, read-only root, dropped capabilities, no-new-privileges, resource limits, an unprivileged user, and one validated writable workspace mount. |
 
@@ -76,6 +76,14 @@ make run
 ```
 
 The API is served at `http://127.0.0.1:8000`, with interactive documentation at `/docs`. `GET /health` reports API, SQLite/workspace, and local Ollama model availability.
+
+Dispatch remains disabled by default. After validating the native Ubuntu environment, enable the bounded local worker supervisor explicitly for an API process with:
+
+```bash
+DISPATCH_ENABLED=true make run
+```
+
+The supervisor starts at most `DISPATCH_MAX_WORKERS` independent worker processes. They share only SQLite durable state; they do not share Python memory and never automatically re-execute a recovered action.
 
 To start in a container, copy `.env.example` to `.env`, set `AGENT_API_TOKEN`, ensure host Ollama is available, then run:
 

@@ -295,3 +295,57 @@ def test_dispatch_worker_executes_only_its_atomic_claim_and_fails_closed(tmp_pat
         "CLAIMED",
         "FAILED",
     ]
+
+
+def test_enabled_dispatch_supervisor_launches_bounded_worker_processes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import asyncio
+
+    from local_ai_agent.runtime.worker_dispatch import LocalDispatchPool
+
+    settings = replace(
+        load_settings(),
+        workspace_root=tmp_path / "workspace",
+        sqlite_path=tmp_path / "workspace" / ".agent" / "agent.db",
+        dispatch_enabled=True,
+        dispatch_max_workers=2,
+    )
+    ensure_workspace(settings)
+    repository = RunRepository(settings.sqlite_path)
+    repository.initialize()
+    lifecycle = RunLifecycleService(repository)
+    launches: list[list[str]] = []
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.terminated = False
+
+        def poll(self):
+            return None if not self.terminated else 0
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def wait(self, timeout=None) -> int:
+            del timeout
+            return 0
+
+    def fake_popen(command, **_):
+        launches.append(command)
+        return FakeProcess()
+
+    monkeypatch.setattr("local_ai_agent.runtime.worker_dispatch.subprocess.Popen", fake_popen)
+    pool = LocalDispatchPool(
+        settings=settings,
+        repository=repository,
+        lifecycle=lifecycle,
+        runtime_builder=lambda **_: None,
+    )
+
+    asyncio.run(pool.start())
+    assert launches == [
+        [__import__("sys").executable, "-m", "local_ai_agent.runtime.worker_main"],
+        [__import__("sys").executable, "-m", "local_ai_agent.runtime.worker_main"],
+    ]
+    asyncio.run(pool.stop())

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -141,29 +143,38 @@ class LocalDispatchWorker:
 
 @dataclass(slots=True)
 class LocalDispatchPool:
-    """Bounded collection of independent local worker loops; disabled by configuration by default."""
+    """Bounded supervisor for independent local worker processes; disabled by default."""
 
     settings: Settings
     repository: RunRepository
     lifecycle: RunLifecycleService
     runtime_builder: Callable[..., SecureRunRuntime]
-    _stop: asyncio.Event = field(default_factory=asyncio.Event, init=False)
-    _tasks: list[asyncio.Task[None]] = field(default_factory=list, init=False)
+    _processes: list[subprocess.Popen[bytes]] = field(default_factory=list, init=False)
 
     async def start(self) -> None:
-        if not self.settings.dispatch_enabled or self._tasks:
+        if not self.settings.dispatch_enabled or self._processes:
             return
+        environment = os.environ.copy()
+        environment["DISPATCH_ENABLED"] = "true"
         for _ in range(self.settings.dispatch_max_workers):
-            worker = LocalDispatchWorker(
-                settings=self.settings,
-                repository=self.repository,
-                lifecycle=self.lifecycle,
-                runtime_builder=self.runtime_builder,
+            process = subprocess.Popen(
+                [sys.executable, "-m", "local_ai_agent.runtime.worker_main"],
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
-            self._tasks.append(asyncio.create_task(worker.run(self._stop)))
+            self._processes.append(process)
 
     async def stop(self) -> None:
-        self._stop.set()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks.clear()
+        running = [process for process in self._processes if process.poll() is None]
+        for process in running:
+            process.terminate()
+        for process in running:
+            try:
+                await asyncio.to_thread(process.wait, self.settings.worker_lease_seconds)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                await asyncio.to_thread(process.wait)
+        self._processes.clear()
