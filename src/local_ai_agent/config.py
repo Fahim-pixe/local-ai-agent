@@ -68,6 +68,14 @@ class Settings:
     system_prompt_path: Path
     worker_lease_seconds: int
     worker_heartbeat_seconds: int
+    dispatch_enabled: bool
+    dispatch_max_workers: int
+    dispatch_claim_poll_seconds: float
+    dispatch_claim_jitter_seconds: float
+    dispatch_worker_stale_seconds: int
+    dispatch_recovery_sweep_seconds: int
+    dispatch_max_attempts: int
+    dispatch_heartbeat_event_sample_seconds: int
     default_max_tool_calls: int
     default_max_runtime_seconds: int
     default_max_shell_executions: int
@@ -131,12 +139,13 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
     prompt = raw["prompt"]
     agent = raw["agent"]
     worker = raw["worker"]
+    dispatch = raw["dispatch"]
 
     project_root = PROJECT_ROOT
     workspace_root = _env_path("WORKSPACE_ROOT", project_root / workspace["root"])
     sqlite_path = _env_path("SQLITE_PATH", workspace_root / ".agent" / "agent.db")
 
-    return Settings(
+    settings = Settings(
         project_root=project_root,
         workspace_root=workspace_root,
         sqlite_path=sqlite_path,
@@ -150,6 +159,25 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
         system_prompt_path=_env_path("SYSTEM_PROMPT_PATH", project_root / prompt["path"]),
         worker_lease_seconds=_env_int("WORKER_LEASE_SECONDS", worker["lease_seconds"]),
         worker_heartbeat_seconds=_env_int("WORKER_HEARTBEAT_SECONDS", worker["heartbeat_seconds"]),
+        dispatch_enabled=_env_bool("DISPATCH_ENABLED", dispatch["enabled"]),
+        dispatch_max_workers=_env_int("DISPATCH_MAX_WORKERS", dispatch["max_workers"]),
+        dispatch_claim_poll_seconds=_env_float(
+            "DISPATCH_CLAIM_POLL_SECONDS", dispatch["claim_poll_seconds"]
+        ),
+        dispatch_claim_jitter_seconds=_env_float(
+            "DISPATCH_CLAIM_JITTER_SECONDS", dispatch["claim_jitter_seconds"]
+        ),
+        dispatch_worker_stale_seconds=_env_int(
+            "DISPATCH_WORKER_STALE_SECONDS", dispatch["worker_stale_seconds"]
+        ),
+        dispatch_recovery_sweep_seconds=_env_int(
+            "DISPATCH_RECOVERY_SWEEP_SECONDS", dispatch["recovery_sweep_seconds"]
+        ),
+        dispatch_max_attempts=_env_int("DISPATCH_MAX_ATTEMPTS", dispatch["max_dispatch_attempts"]),
+        dispatch_heartbeat_event_sample_seconds=_env_int(
+            "DISPATCH_HEARTBEAT_EVENT_SAMPLE_SECONDS",
+            dispatch["heartbeat_event_sample_seconds"],
+        ),
         default_max_tool_calls=_env_int("DEFAULT_MAX_TOOL_CALLS", limits["default_max_tool_calls"]),
         default_max_runtime_seconds=_env_int(
             "DEFAULT_MAX_RUNTIME_SECONDS", limits["default_max_runtime_seconds"]
@@ -188,6 +216,29 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
             "DOCKER_SANDBOX_READ_ONLY_ROOT", sandbox["read_only_root"]
         ),
     )
+    _validate_dispatch_settings(settings)
+    return settings
+
+
+def _validate_dispatch_settings(settings: Settings) -> None:
+    if settings.worker_heartbeat_seconds <= 0:
+        raise ValueError("WORKER_HEARTBEAT_SECONDS must be positive.")
+    if settings.worker_heartbeat_seconds >= settings.worker_lease_seconds:
+        raise ValueError("WORKER_HEARTBEAT_SECONDS must be less than WORKER_LEASE_SECONDS.")
+    if settings.dispatch_max_workers < 1:
+        raise ValueError("DISPATCH_MAX_WORKERS must be at least one.")
+    if settings.dispatch_claim_poll_seconds <= 0:
+        raise ValueError("DISPATCH_CLAIM_POLL_SECONDS must be positive.")
+    if settings.dispatch_claim_jitter_seconds < 0:
+        raise ValueError("DISPATCH_CLAIM_JITTER_SECONDS cannot be negative.")
+    if settings.dispatch_worker_stale_seconds < settings.worker_heartbeat_seconds:
+        raise ValueError("DISPATCH_WORKER_STALE_SECONDS must allow at least one heartbeat.")
+    if settings.dispatch_recovery_sweep_seconds <= 0:
+        raise ValueError("DISPATCH_RECOVERY_SWEEP_SECONDS must be positive.")
+    if settings.dispatch_max_attempts != 1:
+        raise ValueError(
+            "DISPATCH_MAX_ATTEMPTS must remain 1 until a reviewed idempotency pilot is enabled."
+        )
 
 
 def ensure_workspace(settings: Settings) -> None:

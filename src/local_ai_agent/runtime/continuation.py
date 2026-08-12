@@ -31,7 +31,7 @@ class ContinuationResult:
 
 
 class DurableContinuationService:
-    """Execute an approved pending action exactly once and continue its stored conversation."""
+    """Execute one worker-owned action and continue its stored conversation exactly once."""
 
     def __init__(
         self,
@@ -56,7 +56,7 @@ class DurableContinuationService:
         self._checkpoint_sink = RepositoryCheckpointSink(run_id=run_id, repository=repository)
 
     async def resume_approved_action(self, *, system_prompt: str = "") -> ContinuationResult:
-        """Claim, execute, and continue one approved action without reissuing the model request."""
+        """Atomically claim then execute one approved action without a new model tool request."""
         if self._lifecycle.cancel_if_requested(self._run_id):
             raise ContinuationError("Run was cancelled before an approved action could be claimed.")
         action = self._repository.claim_approved_action(
@@ -66,6 +66,16 @@ class DurableContinuationService:
         )
         if action is None:
             raise ContinuationError("No approved pending action is available for continuation.")
+        return await self.resume_claimed_action(action=action, system_prompt=system_prompt)
+
+    async def resume_claimed_action(
+        self, *, action: PendingAction, system_prompt: str = ""
+    ) -> ContinuationResult:
+        """Execute an action already atomically claimed by this worker; never claim it again."""
+        if action.run_id != self._run_id:
+            raise ContinuationError("Claimed action belongs to a different run.")
+        if action.status != "EXECUTING" or action.worker_id != self._worker_id:
+            raise ContinuationError("Claimed action is not owned by this continuation worker.")
         if action.checkpoint_id is None:
             self._repository.finish_pending_action(action.id, succeeded=False)
             raise ContinuationError(
@@ -105,6 +115,7 @@ class DurableContinuationService:
                         "tool_name": action.tool_name,
                         "success": outcome.result.success,
                         "verified": outcome.result.verified,
+                        "worker_id": self._worker_id,
                     },
                 )
             )

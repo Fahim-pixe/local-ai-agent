@@ -6,7 +6,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from local_ai_agent.schemas.contracts import RiskLevel, ToolResult, VerificationResult
+from local_ai_agent.schemas.contracts import (
+    RecoveryClass,
+    RiskLevel,
+    ToolResult,
+    VerificationResult,
+)
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[ToolResult]]
 VerificationHandler = Callable[[dict[str, Any], ToolResult], Awaitable[VerificationResult]]
@@ -22,6 +27,8 @@ class ToolDefinition:
     handler: ToolHandler
     verification: VerificationHandler | None = None
     arguments_validator: ArgumentsValidator | None = None
+    recovery_class: RecoveryClass = RecoveryClass.NEVER_RECLAIM
+    recovery_contract_version: int = 1
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Apply the registered runtime validator; tool handlers never validate themselves."""

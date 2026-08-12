@@ -33,6 +33,14 @@ class RiskLevel(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class RecoveryClass(StrEnum):
+    """Runtime-owned policy for handling a tool action left uncertain by a worker crash."""
+
+    NEVER_RECLAIM = "NEVER_RECLAIM"
+    VERIFY_BEFORE_RECLAIM = "VERIFY_BEFORE_RECLAIM"
+    IDEMPOTENT_RECLAIM = "IDEMPOTENT_RECLAIM"
+
+
 class ToolStatus(StrEnum):
     SUCCESS = "success"
     PARTIAL = "partial"

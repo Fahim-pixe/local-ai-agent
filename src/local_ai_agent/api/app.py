@@ -19,6 +19,7 @@ from local_ai_agent.runtime.lifecycle import LifecycleError, RunLifecycleService
 from local_ai_agent.runtime.ollama_client import OllamaClient, OllamaError
 from local_ai_agent.runtime.production_prompt import ProductionPromptError, load_production_prompt
 from local_ai_agent.runtime.secure_run_runtime import build_secure_run_runtime
+from local_ai_agent.runtime.worker_dispatch import LocalDispatchPool
 from local_ai_agent.schemas.contracts import (
     AgentEvent,
     AgentRun,
@@ -61,6 +62,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     repository = RunRepository(runtime_settings.sqlite_path)
     lifecycle = RunLifecycleService(repository)
     broker = EventBroker()
+    dispatch_pool = LocalDispatchPool(
+        settings=runtime_settings,
+        repository=repository,
+        lifecycle=lifecycle,
+        runtime_builder=build_secure_run_runtime,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -69,7 +76,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.startup_recovered_actions = lifecycle.recover_stale_executing_actions(
             lease_seconds=runtime_settings.worker_lease_seconds
         )
-        yield
+        await dispatch_pool.start()
+        try:
+            yield
+        finally:
+            await dispatch_pool.stop()
 
     app = FastAPI(
         title="Local AI Agent",
@@ -82,6 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.lifecycle = lifecycle
     app.state.broker = broker
     app.state.runtime_builder = build_secure_run_runtime
+    app.state.dispatch_pool = dispatch_pool
 
     async def require_api_token(
         credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
@@ -275,6 +287,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
         return {"pending": pending is not None, "tool": pending}
 
+    @app.get("/workers", tags=["workers"])
+    async def list_workers(_: None = Depends(require_api_token)) -> dict[str, object]:
+        return {
+            "workers": [
+                {
+                    "worker_id": worker.worker_id,
+                    "hostname": worker.hostname,
+                    "process_id": worker.process_id,
+                    "capabilities": worker.capabilities,
+                    "state": worker.state,
+                    "started_at": worker.started_at,
+                    "last_heartbeat_at": worker.last_heartbeat_at,
+                    "stopped_at": worker.stopped_at,
+                }
+                for worker in repository.list_workers()
+            ]
+        }
+
+    @app.get("/workers/{worker_id}", tags=["workers"])
+    async def get_worker(worker_id: str, _: None = Depends(require_api_token)) -> dict[str, object]:
+        worker = repository.get_worker(worker_id)
+        if worker is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found.")
+        return {
+            "worker_id": worker.worker_id,
+            "hostname": worker.hostname,
+            "process_id": worker.process_id,
+            "capabilities": worker.capabilities,
+            "state": worker.state,
+            "started_at": worker.started_at,
+            "last_heartbeat_at": worker.last_heartbeat_at,
+            "stopped_at": worker.stopped_at,
+        }
+
+    @app.post("/workers/{worker_id}/drain", tags=["workers"])
+    async def drain_worker(
+        worker_id: str, _: None = Depends(require_api_token)
+    ) -> dict[str, object]:
+        if not repository.drain_worker(worker_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Worker is missing or cannot be drained from its current state.",
+            )
+        return {"worker_id": worker_id, "state": "DRAINING"}
+
+    @app.get("/actions/{action_id}/attempts", tags=["workers"])
+    async def list_action_attempts(
+        action_id: UUID, _: None = Depends(require_api_token)
+    ) -> dict[str, object]:
+        action = repository.get_action(action_id)
+        if action is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found.")
+        return {
+            "action_id": str(action.id),
+            "attempts": [
+                {
+                    "id": attempt.id,
+                    "attempt": attempt.attempt,
+                    "worker_id": attempt.worker_id,
+                    "status": attempt.status,
+                    "detail": attempt.detail,
+                    "created_at": attempt.created_at,
+                }
+                for attempt in repository.list_action_attempts(action.id)
+            ],
+        }
+
     @app.get("/runs/{run_id}/actions", tags=["runs"])
     async def list_actions(run_id: UUID, _: None = Depends(require_api_token)) -> dict[str, object]:
         if repository.get_run(run_id) is None:
@@ -288,6 +367,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "risk_level": action.risk_level,
                     "status": action.status,
                     "worker_id": action.worker_id,
+                    "recovery_class": action.recovery_class.value,
+                    "operation_key_prefix": action.operation_key[:12]
+                    if action.operation_key
+                    else None,
+                    "dispatch_attempt": action.dispatch_attempt,
+                    "max_dispatch_attempts": action.max_dispatch_attempts,
                     "claimed_at": action.claimed_at,
                     "lease_expires_at": action.lease_expires_at,
                     "recovered_at": action.recovered_at,

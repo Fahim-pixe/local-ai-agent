@@ -12,7 +12,14 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from local_ai_agent.db.schema import initialize_database
-from local_ai_agent.schemas.contracts import AgentEvent, AgentPlan, AgentRun, AgentState, ToolResult
+from local_ai_agent.schemas.contracts import (
+    AgentEvent,
+    AgentPlan,
+    AgentRun,
+    AgentState,
+    RecoveryClass,
+    ToolResult,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,9 +47,48 @@ class PendingAction:
     lease_expires_at: datetime | None
     recovered_at: datetime | None
     recovery_reason: str | None
+    recovery_class: RecoveryClass
+    recovery_contract_version: int
+    operation_key: str | None
+    dispatch_attempt: int
+    max_dispatch_attempts: int
+    available_at: datetime | None
+    previous_worker_id: str | None
+    recovery_verification: dict[str, Any] | None
     executed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerRecord:
+    worker_id: str
+    hostname: str
+    process_id: int
+    capabilities: tuple[str, ...]
+    state: str
+    started_at: datetime
+    last_heartbeat_at: datetime
+    stopped_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ActionAttempt:
+    id: int
+    action_id: UUID
+    attempt: int
+    worker_id: str
+    status: str
+    detail: dict[str, Any] | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchClaim:
+    action: PendingAction
+    worker_id: str
+    attempt: int
+    lease_expires_at: datetime
 
 
 class RunRepository:
@@ -286,6 +332,11 @@ class RunRepository:
         arguments: dict[str, Any],
         risk_level: str,
         checkpoint_id: int | None,
+        recovery_class: RecoveryClass = RecoveryClass.NEVER_RECLAIM,
+        recovery_contract_version: int = 1,
+        operation_key: str | None = None,
+        max_dispatch_attempts: int = 1,
+        available_at: datetime | None = None,
     ) -> PendingAction:
         now = self._now()
         action_id = uuid4()
@@ -294,8 +345,9 @@ class RunRepository:
                 """
                 INSERT INTO pending_actions (
                     id, run_id, tool_name, arguments_json, risk_level, checkpoint_id,
-                    status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                    recovery_class, recovery_contract_version, operation_key,
+                    max_dispatch_attempts, available_at, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
                 """,
                 (
                     str(action_id),
@@ -304,11 +356,200 @@ class RunRepository:
                     json.dumps(arguments, sort_keys=True, default=str),
                     risk_level,
                     checkpoint_id,
+                    recovery_class.value,
+                    recovery_contract_version,
+                    operation_key,
+                    max_dispatch_attempts,
+                    available_at.isoformat() if available_at else None,
                     now,
                     now,
                 ),
             )
         return self.get_pending_action(run_id)  # type: ignore[return-value]
+
+    def register_worker(
+        self,
+        *,
+        worker_id: str,
+        hostname: str,
+        process_id: int,
+        capabilities: tuple[str, ...],
+        now: datetime | None = None,
+    ) -> WorkerRecord:
+        timestamp = (now or datetime.now(UTC)).isoformat()
+        capabilities_json = json.dumps(sorted(capabilities), separators=(",", ":"))
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO workers (
+                    worker_id, hostname, process_id, capabilities_json, state,
+                    started_at, last_heartbeat_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?)
+                ON CONFLICT(worker_id) DO UPDATE SET
+                    hostname = excluded.hostname,
+                    process_id = excluded.process_id,
+                    capabilities_json = excluded.capabilities_json,
+                    state = 'ACTIVE',
+                    last_heartbeat_at = excluded.last_heartbeat_at,
+                    stopped_at = NULL,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    worker_id,
+                    hostname,
+                    process_id,
+                    capabilities_json,
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        return self.get_worker(worker_id)  # type: ignore[return-value]
+
+    def get_worker(self, worker_id: str) -> WorkerRecord | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM workers WHERE worker_id = ?", (worker_id,)
+            ).fetchone()
+        return self._row_to_worker(row) if row else None
+
+    def list_workers(self) -> list[WorkerRecord]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM workers ORDER BY last_heartbeat_at DESC, worker_id ASC"
+            ).fetchall()
+        return [self._row_to_worker(row) for row in rows]
+
+    def heartbeat_worker(self, worker_id: str, *, now: datetime | None = None) -> bool:
+        timestamp = (now or datetime.now(UTC)).isoformat()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE workers SET last_heartbeat_at = ?, updated_at = ?
+                WHERE worker_id = ? AND state = 'ACTIVE'
+                """,
+                (timestamp, timestamp, worker_id),
+            )
+        return bool(cursor.rowcount)
+
+    def drain_worker(self, worker_id: str, *, now: datetime | None = None) -> bool:
+        timestamp = (now or datetime.now(UTC)).isoformat()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE workers SET state = 'DRAINING', updated_at = ?
+                WHERE worker_id = ? AND state = 'ACTIVE'
+                """,
+                (timestamp, worker_id),
+            )
+        return bool(cursor.rowcount)
+
+    def stop_worker(self, worker_id: str, *, now: datetime | None = None) -> bool:
+        timestamp = (now or datetime.now(UTC)).isoformat()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE workers SET state = 'STOPPED', stopped_at = ?, updated_at = ?
+                WHERE worker_id = ? AND state IN ('ACTIVE', 'DRAINING')
+                """,
+                (timestamp, timestamp, worker_id),
+            )
+        return bool(cursor.rowcount)
+
+    def list_action_attempts(self, action_id: UUID) -> list[ActionAttempt]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM action_attempts WHERE action_id = ? ORDER BY id ASC",
+                (str(action_id),),
+            ).fetchall()
+        return [self._row_to_action_attempt(row) for row in rows]
+
+    def claim_next_dispatchable_action(
+        self,
+        *,
+        worker_id: str,
+        capabilities: tuple[str, ...],
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> DispatchClaim | None:
+        """Atomically claim one eligible action for an active worker without executing it."""
+        if not capabilities:
+            return None
+        claim_time = now or datetime.now(UTC)
+        claim_value = claim_time.isoformat()
+        lease_value = (claim_time + timedelta(seconds=lease_seconds)).isoformat()
+        with self.connect() as connection:
+            worker = connection.execute(
+                "SELECT capabilities_json FROM workers WHERE worker_id = ? AND state = 'ACTIVE'",
+                (worker_id,),
+            ).fetchone()
+            if worker is None:
+                return None
+            advertised = set(json.loads(worker["capabilities_json"]))
+            eligible_capabilities = tuple(tool for tool in capabilities if tool in advertised)
+            if not eligible_capabilities:
+                return None
+            placeholders = ", ".join("?" for _ in eligible_capabilities)
+            row = connection.execute(
+                f"""
+                SELECT * FROM pending_actions
+                WHERE status = 'APPROVED'
+                  AND dispatch_attempt < max_dispatch_attempts
+                  AND (available_at IS NULL OR available_at <= ?)
+                  AND tool_name IN ({placeholders})
+                ORDER BY approved_at ASC, created_at ASC
+                LIMIT 1
+                """,
+                (claim_value, *eligible_capabilities),
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = connection.execute(
+                """
+                UPDATE pending_actions
+                SET status = 'EXECUTING', worker_id = ?, claimed_at = ?, lease_expires_at = ?,
+                    dispatch_attempt = dispatch_attempt + 1, recovered_at = NULL,
+                    recovery_reason = NULL, updated_at = ?
+                WHERE id = ? AND status = 'APPROVED'
+                  AND dispatch_attempt < max_dispatch_attempts
+                  AND (available_at IS NULL OR available_at <= ?)
+                """,
+                (worker_id, claim_value, lease_value, claim_value, row["id"], claim_value),
+            )
+            if cursor.rowcount != 1:
+                return None
+            claimed = connection.execute(
+                "SELECT * FROM pending_actions WHERE id = ?", (row["id"],)
+            ).fetchone()
+            attempt = int(claimed["dispatch_attempt"])
+            connection.execute(
+                """
+                INSERT INTO action_attempts (action_id, attempt, worker_id, status, detail_json, created_at)
+                VALUES (?, ?, ?, 'CLAIMED', ?, ?)
+                """,
+                (
+                    row["id"],
+                    attempt,
+                    worker_id,
+                    json.dumps(
+                        {
+                            "lease_expires_at": lease_value,
+                            "recovery_class": claimed["recovery_class"],
+                        },
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    claim_value,
+                ),
+            )
+        action = self._row_to_pending_action(claimed)
+        return DispatchClaim(
+            action=action,
+            worker_id=worker_id,
+            attempt=attempt,
+            lease_expires_at=datetime.fromisoformat(lease_value),
+        )
 
     def get_pending_action(self, run_id: UUID) -> PendingAction | None:
         with self.connect() as connection:
@@ -319,6 +560,13 @@ class RunRepository:
                 ORDER BY created_at DESC LIMIT 1
                 """,
                 (str(run_id),),
+            ).fetchone()
+        return self._row_to_pending_action(row) if row else None
+
+    def get_action(self, action_id: UUID) -> PendingAction | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM pending_actions WHERE id = ?", (str(action_id),)
             ).fetchone()
         return self._row_to_pending_action(row) if row else None
 
@@ -449,13 +697,38 @@ class RunRepository:
                     updated = connection.execute(
                         "SELECT * FROM pending_actions WHERE id = ?", (row["id"],)
                     ).fetchone()
+                    connection.execute(
+                        """
+                        INSERT INTO action_attempts (
+                            action_id, attempt, worker_id, status, detail_json, created_at
+                        ) VALUES (?, ?, ?, 'RECOVERED', ?, ?)
+                        """,
+                        (
+                            row["id"],
+                            int(updated["dispatch_attempt"]),
+                            updated["worker_id"] or "unknown",
+                            json.dumps(
+                                {
+                                    "recovery_class": updated["recovery_class"],
+                                    "recovery_reason": reason,
+                                },
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ),
+                            recovery_value,
+                        ),
+                    )
                     recovered.append(self._row_to_pending_action(updated))
         return recovered
 
     def finish_pending_action(self, action_id: UUID, succeeded: bool) -> None:
         now = self._now()
         with self.connect() as connection:
-            connection.execute(
+            row = connection.execute(
+                "SELECT worker_id, dispatch_attempt FROM pending_actions WHERE id = ?",
+                (str(action_id),),
+            ).fetchone()
+            cursor = connection.execute(
                 """
                 UPDATE pending_actions
                 SET status = ?, executed_at = ?, updated_at = ?
@@ -463,6 +736,21 @@ class RunRepository:
                 """,
                 ("EXECUTED" if succeeded else "FAILED", now, now, str(action_id)),
             )
+            if cursor.rowcount and row is not None:
+                connection.execute(
+                    """
+                    INSERT INTO action_attempts (action_id, attempt, worker_id, status, detail_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(action_id),
+                        int(row["dispatch_attempt"]),
+                        row["worker_id"] or "runtime",
+                        "EXECUTED" if succeeded else "FAILED",
+                        json.dumps({"verified": succeeded}, separators=(",", ":"), sort_keys=True),
+                        now,
+                    ),
+                )
 
     def request_cancellation(self, run_id: UUID) -> bool:
         return self._update_control(run_id, "cancel_requested = 1")
@@ -557,10 +845,70 @@ class RunRepository:
                 datetime.fromisoformat(row["recovered_at"]) if row["recovered_at"] else None
             ),
             recovery_reason=row["recovery_reason"],
+            recovery_class=RecoveryClass(row["recovery_class"]),
+            recovery_contract_version=int(row["recovery_contract_version"]),
+            operation_key=row["operation_key"],
+            dispatch_attempt=int(row["dispatch_attempt"]),
+            max_dispatch_attempts=int(row["max_dispatch_attempts"]),
+            available_at=(
+                datetime.fromisoformat(row["available_at"]) if row["available_at"] else None
+            ),
+            previous_worker_id=row["previous_worker_id"],
+            recovery_verification=(
+                json.loads(row["recovery_verification_json"])
+                if row["recovery_verification_json"]
+                else None
+            ),
             executed_at=datetime.fromisoformat(row["executed_at"]) if row["executed_at"] else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
+
+    @staticmethod
+    def _row_to_worker(row: sqlite3.Row) -> WorkerRecord:
+        return WorkerRecord(
+            worker_id=row["worker_id"],
+            hostname=row["hostname"],
+            process_id=int(row["process_id"]),
+            capabilities=tuple(json.loads(row["capabilities_json"])),
+            state=row["state"],
+            started_at=datetime.fromisoformat(row["started_at"]),
+            last_heartbeat_at=datetime.fromisoformat(row["last_heartbeat_at"]),
+            stopped_at=datetime.fromisoformat(row["stopped_at"]) if row["stopped_at"] else None,
+        )
+
+    @staticmethod
+    def _row_to_action_attempt(row: sqlite3.Row) -> ActionAttempt:
+        return ActionAttempt(
+            id=int(row["id"]),
+            action_id=UUID(row["action_id"]),
+            attempt=int(row["attempt"]),
+            worker_id=row["worker_id"],
+            status=row["status"],
+            detail=json.loads(row["detail_json"]) if row["detail_json"] else None,
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    @staticmethod
+    def operation_key(
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        workspace_id: str,
+        recovery_contract_version: int,
+    ) -> str:
+        canonical = json.dumps(
+            {
+                "arguments": arguments,
+                "recovery_contract_version": recovery_contract_version,
+                "tool_name": tool_name,
+                "workspace_id": workspace_id,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _now() -> str:

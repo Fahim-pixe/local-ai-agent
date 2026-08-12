@@ -52,10 +52,10 @@ The initial commit does not pretend to implement the full autonomous runtime. Th
 
 | Deferred component | Reason for deferral |
 | --- | --- |
-| Multi-process dispatch and idempotent re-claim | The runtime now assigns worker-owned renewable leases and fails expired `EXECUTING` claims safely at startup. Distributed dispatch, lease metrics, and any idempotency-based re-claim policy remain follow-on work. |
+| Verifier-backed idempotent re-claim pilot | The runtime now has configuration-gated bounded local dispatch, worker registration/heartbeats, atomic eligible claims, append-only action attempts, and runtime-owned recovery classes. All current tools remain `NEVER_RECLAIM` with a maximum dispatch attempt of one; any verifier-backed re-claim policy remains follow-on work. |
 | Broader local-model benchmark baseline | The Phase 6 corpus is ready, but it requires target hardware with Ollama and Qwen3 available to collect an operational baseline and broaden scenario coverage. |
 | Additional secure operations | Any new tool still requires operation-specific schema, path/command policy, risk gate, transaction semantics where applicable, verification, and audit coverage. |
 
 ## Immediate next development milestone
 
-The next milestone should baseline worker lease recovery under native Ubuntu Docker validation, then consider explicit multi-process dispatch and lease metrics. The opt-in Phase 6 local-model corpus should be run and baselined on target hardware before expanding the tool surface. Priority 4 uses local FTS5 as the semantic retrieval baseline; embeddings should remain a separately evaluated enhancement.
+The next milestone should baseline configuration-gated local dispatch under native Ubuntu Docker and real-Ollama validation, then consider sampled lease metrics and a narrowly reviewed verifier-backed idempotency pilot. The opt-in Phase 6 local-model corpus should be run and baselined on target hardware before expanding the tool surface. Priority 4 uses local FTS5 as the semantic retrieval baseline; embeddings should remain a separately evaluated enhancement.

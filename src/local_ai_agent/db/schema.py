@@ -130,12 +130,49 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     lease_expires_at TEXT,
     recovered_at TEXT,
     recovery_reason TEXT,
+    recovery_class TEXT NOT NULL DEFAULT 'NEVER_RECLAIM',
+    recovery_contract_version INTEGER NOT NULL DEFAULT 1,
+    operation_key TEXT,
+    dispatch_attempt INTEGER NOT NULL DEFAULT 0,
+    max_dispatch_attempts INTEGER NOT NULL DEFAULT 1,
+    available_at TEXT,
+    previous_worker_id TEXT,
+    recovery_verification_json TEXT,
     executed_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_actions_run_status ON pending_actions(run_id, status);
+
+CREATE TABLE IF NOT EXISTS workers (
+    worker_id TEXT PRIMARY KEY,
+    hostname TEXT NOT NULL,
+    process_id INTEGER NOT NULL,
+    capabilities_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('STARTING', 'ACTIVE', 'DRAINING', 'STOPPED')),
+    started_at TEXT NOT NULL,
+    last_heartbeat_at TEXT NOT NULL,
+    stopped_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workers_active_heartbeat
+    ON workers(state, last_heartbeat_at);
+
+CREATE TABLE IF NOT EXISTS action_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_id TEXT NOT NULL REFERENCES pending_actions(id) ON DELETE CASCADE,
+    attempt INTEGER NOT NULL,
+    worker_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('CLAIMED', 'HEARTBEAT', 'EXECUTED', 'FAILED', 'RECOVERED')),
+    detail_json TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_attempts_action_attempt
+    ON action_attempts(action_id, attempt, created_at);
 """
 
 
@@ -149,6 +186,14 @@ def _ensure_pending_action_recovery_columns(connection: sqlite3.Connection) -> N
         ("lease_expires_at", "TEXT"),
         ("recovered_at", "TEXT"),
         ("recovery_reason", "TEXT"),
+        ("recovery_class", "TEXT NOT NULL DEFAULT 'NEVER_RECLAIM'"),
+        ("recovery_contract_version", "INTEGER NOT NULL DEFAULT 1"),
+        ("operation_key", "TEXT"),
+        ("dispatch_attempt", "INTEGER NOT NULL DEFAULT 0"),
+        ("max_dispatch_attempts", "INTEGER NOT NULL DEFAULT 1"),
+        ("available_at", "TEXT"),
+        ("previous_worker_id", "TEXT"),
+        ("recovery_verification_json", "TEXT"),
     ):
         if name not in existing_columns:
             connection.execute(f"ALTER TABLE pending_actions ADD COLUMN {name} {definition}")
@@ -162,6 +207,14 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_pending_actions_stale_lease "
             "ON pending_actions(status, lease_expires_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pending_actions_dispatchable "
+            "ON pending_actions(status, available_at, dispatch_attempt, max_dispatch_attempts)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pending_actions_operation_key "
+            "ON pending_actions(operation_key)"
         )
         definition = connection.execute(
             "SELECT sql FROM sqlite_master WHERE name = 'memory_fts'"

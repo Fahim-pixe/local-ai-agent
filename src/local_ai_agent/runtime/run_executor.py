@@ -87,6 +87,9 @@ class RunToolExecutor:
         )
         if outcome.authorization_required and definition is not None:
             with suppress(LifecycleError):
+                run = self._repository.get_run(self._run_id)
+                if run is None:
+                    raise LifecycleError("Cannot persist authorization metadata for a missing run.")
                 self._lifecycle.require_authorization(
                     AuthorizationRequest(
                         run_id=self._run_id,
@@ -94,6 +97,15 @@ class RunToolExecutor:
                         arguments=arguments,
                         risk=definition.risk.value,
                         checkpoint_id=checkpoint_id,
+                        recovery_class=definition.recovery_class,
+                        recovery_contract_version=definition.recovery_contract_version,
+                        operation_key=self._repository.operation_key(
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            workspace_id=run.workspace_id,
+                            recovery_contract_version=definition.recovery_contract_version,
+                        ),
+                        max_dispatch_attempts=1,
                     )
                 )
         return outcome

@@ -34,7 +34,7 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Context assembly | `ContextManager` preserves P0 runtime state, keeps fitting P1 evidence and retrieved memory, truncates P2 history with line-range hints, and drops P3 duplicate/old verified outputs. |
 | Verified memory tool | `memory.store` is a registered medium-risk tool with secret redaction and retrieval-based verification. |
 | Production prompt provenance | `config/agent.toml` provides agent name and mission, which render into `config/system_prompt.md` before SHA-256 hashing; every API-created run records the exact runtime-owned prompt hash in SQLite. |
-| Durable ReAct continuation | Append-only message checkpoints bind high-risk requests to a single pending action, which must be approved, worker-claimed with a renewable lease, executed once, and replayed from the exact assistant turn. Expired `EXECUTING` leases fail safely with a durable crash-recovery audit event rather than being re-executed. |
+| Durable ReAct continuation and dispatch | Append-only message checkpoints bind high-risk requests to a single pending action. A configuration-gated bounded local worker pool can register, heartbeat, atomically claim, and execute one owned action; all current tools are `NEVER_RECLAIM`, so expired `EXECUTING` work fails safely rather than being re-executed. |
 | API lifecycle | `api/app.py` provides token-gated lifecycle endpoints, durable event history with SSE fanout, cancellation, authorization, replies, run listing, approved-action continuation, and resume-token validation. |
 | Sandbox boundary | `runtime/docker_sandbox.py` owns a Docker invocation with no network, read-only root, dropped capabilities, no-new-privileges, resource limits, an unprivileged user, and one validated writable workspace mount. |
 
@@ -97,6 +97,7 @@ Versioned defaults belong in `config/agent.toml`. Secrets and environment-specif
 | `DEFAULT_MAX_*` | Runtime budget ceilings for tools, duration, and shell actions. |
 | `RAG_*`, `CONTEXT_CHARS_PER_TOKEN` | FTS retrieval count and token-estimation/truncation controls for assembled runtime context. |
 | `WORKER_LEASE_SECONDS`, `WORKER_HEARTBEAT_SECONDS` | Lease expiry and renewal interval for executing approved actions; stale claims are safely recovered as failures at startup. |
+| `DISPATCH_*` | Disabled-by-default bounded local worker count, polling, recovery sweep, worker staleness, and attempt-cap policy. `DISPATCH_MAX_ATTEMPTS` remains `1` until a separately reviewed idempotency pilot. |
 | `DOCKER_SANDBOX_*` | Mandatory resource, user, filesystem, and network restrictions for sandboxed high-risk tools. |
 | `AGENT_API_TOKEN` | Bearer token for run lifecycle endpoints. |
 
@@ -115,7 +116,10 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 | `POST` | `/runs/{run_id}/continue` | Atomically claims one approved action, executes it through the secure tool path, checkpoints the result, and replays the stored ReAct conversation. |
 | `POST` | `/runs/{run_id}/resume` | Requires the run’s persisted `resume_token` and then atomically resumes one approved checkpointed action. |
 | `GET` | `/runs/{run_id}/pending-authorization` | Returns the sanitized persisted pending tool action, when present. |
-| `GET` | `/runs/{run_id}/actions` | Returns durable action history, including worker owner, lease expiry, and crash-recovery metadata. |
+| `GET` | `/runs/{run_id}/actions` | Returns durable action history, including worker owner, recovery class, operation-key prefix, dispatch count, lease expiry, and crash-recovery metadata. |
+| `GET` | `/workers`, `/workers/{worker_id}` | Returns registered local worker identity, capabilities, state, and heartbeat metadata. |
+| `POST` | `/workers/{worker_id}/drain` | Prevents an active worker from claiming additional work and supports graceful shutdown. |
+| `GET` | `/actions/{action_id}/attempts` | Returns append-only claim, terminal, and crash-recovery evidence for one durable action. |
 | `POST` | `/runs/{run_id}/reply` | Persists a user reply event for a paused runtime. |
 | `GET` | `/runs` | Returns recent persisted runs. |
 
@@ -123,9 +127,9 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 
 The next commits should follow the specification's trust-first order:
 
-1. Expand worker orchestration with optional multi-process dispatch, lease metrics, and explicit idempotency classification only after the safe stale-claim failure policy has been baselined.
+1. Baseline configuration-gated local dispatch under native Ubuntu, then add sampled lease metrics and consider a narrowly reviewed verifier-backed idempotency pilot; no high-risk tool may be automatically re-executed.
 2. Run and baseline the opt-in local Qwen3 coding corpus on target hardware before expanding its task set.
 3. Extend semantic memory with local embeddings only after evaluating the FTS5 baseline and preserving the current confidence/staleness model.
-4. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, independent verification, and audit coverage.
+4. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, verification, recovery classification, and audit coverage.
 
 See [`docs/specification-alignment.md`](docs/specification-alignment.md) for the setup-to-specification mapping.

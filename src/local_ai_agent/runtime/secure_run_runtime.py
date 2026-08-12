@@ -100,6 +100,7 @@ def build_secure_run_runtime(
     repository: RunRepository,
     lifecycle: RunLifecycleService,
     client: NativeToolChatClient | None = None,
+    worker_id: str | None = None,
 ) -> SecureRunRuntime:
     """Create the per-run tool surface; high-risk handlers remain gated by ToolRouter."""
     run = repository.get_run(run_id)
@@ -142,7 +143,7 @@ def build_secure_run_runtime(
         lifecycle=lifecycle,
         executor=executor,
         react_loop=loop,
-        worker_id=f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex}",
+        worker_id=worker_id or f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex}",
         lease_seconds=settings.worker_lease_seconds,
         heartbeat_seconds=settings.worker_heartbeat_seconds,
     )

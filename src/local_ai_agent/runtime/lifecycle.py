@@ -9,7 +9,7 @@ from uuid import UUID
 
 from local_ai_agent.db.repository import RunRepository
 from local_ai_agent.runtime.state_machine import InvalidStateTransition, StateMachine
-from local_ai_agent.schemas.contracts import AgentEvent, AgentRun, AgentState
+from local_ai_agent.schemas.contracts import AgentEvent, AgentRun, AgentState, RecoveryClass
 
 
 class WorkspaceBusyError(RuntimeError):
@@ -27,6 +27,10 @@ class AuthorizationRequest:
     arguments: dict[str, Any]
     risk: str
     checkpoint_id: int | None = None
+    recovery_class: RecoveryClass = RecoveryClass.NEVER_RECLAIM
+    recovery_contract_version: int = 1
+    operation_key: str | None = None
+    max_dispatch_attempts: int = 1
 
 
 class RunLifecycleService:
@@ -110,6 +114,10 @@ class RunLifecycleService:
             arguments=request.arguments,
             risk_level=request.risk,
             checkpoint_id=request.checkpoint_id,
+            recovery_class=request.recovery_class,
+            recovery_contract_version=request.recovery_contract_version,
+            operation_key=request.operation_key,
+            max_dispatch_attempts=request.max_dispatch_attempts,
         )
         if not self._repository.set_pending_authorization(
             request.run_id,

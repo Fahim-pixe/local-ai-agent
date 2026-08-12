@@ -16,6 +16,16 @@ path = "config/system_prompt.md"
 lease_seconds = 300
 heartbeat_seconds = 30
 
+[dispatch]
+enabled = false
+max_workers = 1
+claim_poll_seconds = 1.0
+claim_jitter_seconds = 0.25
+worker_stale_seconds = 120
+recovery_sweep_seconds = 30
+max_dispatch_attempts = 1
+heartbeat_event_sample_seconds = 30
+
 [workspace]
 root = "./workspace"
 project_directory = "project"
