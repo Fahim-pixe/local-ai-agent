@@ -12,6 +12,10 @@ request_timeout_seconds = 120
 [prompt]
 path = "config/system_prompt.md"
 
+[worker]
+lease_seconds = 300
+heartbeat_seconds = 30
+
 [workspace]
 root = "./workspace"
 project_directory = "project"

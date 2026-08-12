@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import socket
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from local_ai_agent.config import Settings
 from local_ai_agent.db.repository import RunRepository
@@ -140,6 +142,9 @@ def build_secure_run_runtime(
         lifecycle=lifecycle,
         executor=executor,
         react_loop=loop,
+        worker_id=f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex}",
+        lease_seconds=settings.worker_lease_seconds,
+        heartbeat_seconds=settings.worker_heartbeat_seconds,
     )
     return SecureRunRuntime(
         run_id=run_id,

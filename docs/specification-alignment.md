@@ -26,8 +26,8 @@ This repository maps the supplied **Local AI Agent Architecture Specification v2
 | SQLite FTS5 initial semantic-search path | `memory_fts` virtual table | Implemented and migration-tested |
 | Symlink-safe workspace enforcement | `security/paths.py` | Implemented foundation |
 | Docker as tool sandbox boundary | `runtime/docker_sandbox.py`, `docker/sandbox/Dockerfile`, and centrally validated sandbox settings | Implemented and integration-tested |
-| Durable ReAct checkpoints and pending actions | `react_checkpoints`, `pending_actions`, `runtime/checkpointing.py`, and `runtime/continuation.py` | Implemented with append-only messages, approval, single claim, execution result checkpointing, and exact replay |
-| API lifecycle + SSE | `api/app.py` | Implemented with durable creation, cancellation, authorization, replies, listing, historical events, live SSE notifications, approved-action continuation, and token-validated `POST /runs/{id}/resume` |
+| Durable ReAct checkpoints, worker leases, and pending actions | `react_checkpoints`, lease-extended `pending_actions`, `runtime/checkpointing.py`, and `runtime/continuation.py` | Implemented with append-only messages, approval, single worker claim, renewable owner-checked lease, execution result checkpointing, and exact replay |
+| API lifecycle + SSE | `api/app.py` | Implemented with durable creation, cancellation, authorization, replies, listing, historical events, live SSE notifications, approved-action continuation, token-validated `POST /runs/{id}/resume`, startup stale-claim recovery, and `GET /runs/{id}/actions` lease/recovery observability |
 | Versioned production prompt and SHA-256 provenance | `config/agent.toml`, `config/system_prompt.md`, `runtime/production_prompt.py`, `Settings`, and `agent_runs.prompt_hash` | Implemented; TOML-backed name and mission render into the UTF-8 prompt before its exact message bytes are hashed and persisted for every API-created run |
 | Opt-in end-to-end local coding evaluation | `evaluation/coding_tasks.py`, `tests/test_coding_evaluation.py`, and `make test-ollama` | Implemented for list, read, and write scenarios; it grades durable verified tool evidence and deterministic workspace outcomes when `RUN_OLLAMA_EVALUATION=1` |
 | Environment-controlled paths, models, budgets, limits | `config/agent.toml` and `.env.example` | Ready |
@@ -52,10 +52,10 @@ The initial commit does not pretend to implement the full autonomous runtime. Th
 
 | Deferred component | Reason for deferral |
 | --- | --- |
-| Run-worker orchestration and crash recovery | Continuation is durable and single-claim, but background worker ownership, abandoned-claim recovery, and observability classification remain explicit follow-on work. |
+| Multi-process dispatch and idempotent re-claim | The runtime now assigns worker-owned renewable leases and fails expired `EXECUTING` claims safely at startup. Distributed dispatch, lease metrics, and any idempotency-based re-claim policy remain follow-on work. |
 | Broader local-model benchmark baseline | The Phase 6 corpus is ready, but it requires target hardware with Ollama and Qwen3 available to collect an operational baseline and broaden scenario coverage. |
 | Additional secure operations | Any new tool still requires operation-specific schema, path/command policy, risk gate, transaction semantics where applicable, verification, and audit coverage. |
 
 ## Immediate next development milestone
 
-The next milestone should add explicit worker ownership, abandoned-action recovery, and continuation observability. The opt-in Phase 6 local-model corpus should be run and baselined on target hardware before expanding the tool surface. Priority 4 uses local FTS5 as the semantic retrieval baseline; embeddings should remain a separately evaluated enhancement.
+The next milestone should baseline worker lease recovery under native Ubuntu Docker validation, then consider explicit multi-process dispatch and lease metrics. The opt-in Phase 6 local-model corpus should be run and baselined on target hardware before expanding the tool surface. Priority 4 uses local FTS5 as the semantic retrieval baseline; embeddings should remain a separately evaluated enhancement.

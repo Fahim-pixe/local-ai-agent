@@ -66,6 +66,8 @@ class Settings:
     agent_name: str
     agent_mission: str
     system_prompt_path: Path
+    worker_lease_seconds: int
+    worker_heartbeat_seconds: int
     default_max_tool_calls: int
     default_max_runtime_seconds: int
     default_max_shell_executions: int
@@ -128,6 +130,7 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
     workspace = raw["workspace"]
     prompt = raw["prompt"]
     agent = raw["agent"]
+    worker = raw["worker"]
 
     project_root = PROJECT_ROOT
     workspace_root = _env_path("WORKSPACE_ROOT", project_root / workspace["root"])
@@ -145,6 +148,8 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
         agent_name=_env_str("AGENT_NAME", agent["name"]),
         agent_mission=_env_str("AGENT_MISSION", agent["mission"]),
         system_prompt_path=_env_path("SYSTEM_PROMPT_PATH", project_root / prompt["path"]),
+        worker_lease_seconds=_env_int("WORKER_LEASE_SECONDS", worker["lease_seconds"]),
+        worker_heartbeat_seconds=_env_int("WORKER_HEARTBEAT_SECONDS", worker["heartbeat_seconds"]),
         default_max_tool_calls=_env_int("DEFAULT_MAX_TOOL_CALLS", limits["default_max_tool_calls"]),
         default_max_runtime_seconds=_env_int(
             "DEFAULT_MAX_RUNTIME_SECONDS", limits["default_max_runtime_seconds"]

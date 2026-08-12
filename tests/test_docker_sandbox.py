@@ -31,6 +31,8 @@ def sandbox_settings(tmp_path: Path) -> Settings:
         agent_name="Local AI Agent",
         agent_mission="Execute approved local tasks with evidence-based, policy-enforced tool use.",
         system_prompt_path=tmp_path / "config" / "system_prompt.md",
+        worker_lease_seconds=300,
+        worker_heartbeat_seconds=30,
         default_max_tool_calls=30,
         default_max_runtime_seconds=60,
         default_max_shell_executions=10,

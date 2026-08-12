@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -39,19 +41,29 @@ class DurableContinuationService:
         lifecycle: RunLifecycleService,
         executor: RunToolExecutor,
         react_loop: ReActLoop,
+        worker_id: str,
+        lease_seconds: int,
+        heartbeat_seconds: int,
     ) -> None:
         self._run_id = run_id
         self._repository = repository
         self._lifecycle = lifecycle
         self._executor = executor
         self._react_loop = react_loop
+        self._worker_id = worker_id
+        self._lease_seconds = lease_seconds
+        self._heartbeat_seconds = heartbeat_seconds
         self._checkpoint_sink = RepositoryCheckpointSink(run_id=run_id, repository=repository)
 
     async def resume_approved_action(self, *, system_prompt: str = "") -> ContinuationResult:
         """Claim, execute, and continue one approved action without reissuing the model request."""
         if self._lifecycle.cancel_if_requested(self._run_id):
             raise ContinuationError("Run was cancelled before an approved action could be claimed.")
-        action = self._repository.claim_approved_action(self._run_id)
+        action = self._repository.claim_approved_action(
+            self._run_id,
+            worker_id=self._worker_id,
+            lease_seconds=self._lease_seconds,
+        )
         if action is None:
             raise ContinuationError("No approved pending action is available for continuation.")
         if action.checkpoint_id is None:
@@ -64,12 +76,20 @@ class DurableContinuationService:
             self._repository.finish_pending_action(action.id, succeeded=False)
             raise ContinuationError("Approved action references an invalid durable checkpoint.")
 
-        outcome = await self._executor.execute(
-            tool_name=action.tool_name,
-            arguments=action.arguments,
-            authorization_granted=True,
-            checkpoint_id=checkpoint.id,
-        )
+        heartbeat_stop = asyncio.Event()
+        heartbeat = asyncio.create_task(self._heartbeat(action.id, heartbeat_stop))
+        try:
+            outcome = await self._executor.execute(
+                tool_name=action.tool_name,
+                arguments=action.arguments,
+                authorization_granted=True,
+                checkpoint_id=checkpoint.id,
+            )
+        finally:
+            heartbeat_stop.set()
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
         action_succeeded = outcome.result.success and outcome.result.verified
         self._repository.finish_pending_action(action.id, succeeded=action_succeeded)
         current_run = self._repository.get_run(self._run_id)
@@ -113,3 +133,17 @@ class DurableContinuationService:
             action_outcome=outcome,
             react_result=react_result,
         )
+
+    async def _heartbeat(self, action_id: UUID, stop: asyncio.Event) -> None:
+        """Renew a live worker lease until action execution completes or ownership changes."""
+        while True:
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=self._heartbeat_seconds)
+                return
+            except TimeoutError:
+                if not self._repository.renew_action_lease(
+                    action_id,
+                    worker_id=self._worker_id,
+                    lease_seconds=self._lease_seconds,
+                ):
+                    return

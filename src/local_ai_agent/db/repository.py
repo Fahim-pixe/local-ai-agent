@@ -6,7 +6,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -36,6 +36,10 @@ class PendingAction:
     status: str
     approved_at: datetime | None
     claimed_at: datetime | None
+    worker_id: str | None
+    lease_expires_at: datetime | None
+    recovered_at: datetime | None
+    recovery_reason: str | None
     executed_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -318,6 +322,14 @@ class RunRepository:
             ).fetchone()
         return self._row_to_pending_action(row) if row else None
 
+    def list_pending_actions(self, run_id: UUID) -> list[PendingAction]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM pending_actions WHERE run_id = ? ORDER BY created_at ASC",
+                (str(run_id),),
+            ).fetchall()
+        return [self._row_to_pending_action(row) for row in rows]
+
     def approve_pending_action(self, run_id: UUID) -> PendingAction | None:
         now = self._now()
         with self.connect() as connection:
@@ -341,8 +353,17 @@ class RunRepository:
                 (now, str(run_id)),
             )
 
-    def claim_approved_action(self, run_id: UUID) -> PendingAction | None:
-        now = self._now()
+    def claim_approved_action(
+        self,
+        run_id: UUID,
+        *,
+        worker_id: str = "runtime",
+        lease_seconds: int = 300,
+        now: datetime | None = None,
+    ) -> PendingAction | None:
+        claim_time = now or datetime.now(UTC)
+        now_value = claim_time.isoformat()
+        lease_expires_at = (claim_time + timedelta(seconds=lease_seconds)).isoformat()
         with self.connect() as connection:
             row = connection.execute(
                 """
@@ -355,10 +376,12 @@ class RunRepository:
                 return None
             cursor = connection.execute(
                 """
-                UPDATE pending_actions SET status = 'EXECUTING', claimed_at = ?, updated_at = ?
+                UPDATE pending_actions
+                SET status = 'EXECUTING', claimed_at = ?, worker_id = ?, lease_expires_at = ?,
+                    recovered_at = NULL, recovery_reason = NULL, updated_at = ?
                 WHERE id = ? AND status = 'APPROVED'
                 """,
-                (now, now, row["id"]),
+                (now_value, worker_id, lease_expires_at, now_value, row["id"]),
             )
             if not cursor.rowcount:
                 return None
@@ -366,6 +389,68 @@ class RunRepository:
                 "SELECT * FROM pending_actions WHERE id = ?", (row["id"],)
             ).fetchone()
         return self._row_to_pending_action(claimed)
+
+    def renew_action_lease(
+        self,
+        action_id: UUID,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> bool:
+        """Extend an executing action lease only when it remains owned by this worker."""
+        renewal_time = now or datetime.now(UTC)
+        lease_expires_at = (renewal_time + timedelta(seconds=lease_seconds)).isoformat()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE pending_actions SET lease_expires_at = ?, updated_at = ?
+                WHERE id = ? AND status = 'EXECUTING' AND worker_id = ?
+                """,
+                (lease_expires_at, renewal_time.isoformat(), str(action_id), worker_id),
+            )
+        return bool(cursor.rowcount)
+
+    def recover_stale_executing_actions(
+        self,
+        *,
+        now: datetime | None = None,
+        lease_seconds: int = 300,
+        reason: str = "WORKER_CRASH_RECOVERY",
+    ) -> list[PendingAction]:
+        """Fail expired executing actions without making a potentially unsafe tool call twice."""
+        recovery_time = now or datetime.now(UTC)
+        recovery_value = recovery_time.isoformat()
+        legacy_cutoff = (recovery_time - timedelta(seconds=lease_seconds)).isoformat()
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM pending_actions
+                WHERE status = 'EXECUTING'
+                  AND (
+                    (lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
+                    OR (lease_expires_at IS NULL AND claimed_at <= ?)
+                  )
+                ORDER BY claimed_at ASC
+                """,
+                (recovery_value, legacy_cutoff),
+            ).fetchall()
+            recovered: list[PendingAction] = []
+            for row in rows:
+                cursor = connection.execute(
+                    """
+                    UPDATE pending_actions
+                    SET status = 'FAILED', recovered_at = ?, recovery_reason = ?, updated_at = ?
+                    WHERE id = ? AND status = 'EXECUTING'
+                    """,
+                    (recovery_value, reason, recovery_value, row["id"]),
+                )
+                if cursor.rowcount:
+                    updated = connection.execute(
+                        "SELECT * FROM pending_actions WHERE id = ?", (row["id"],)
+                    ).fetchone()
+                    recovered.append(self._row_to_pending_action(updated))
+        return recovered
 
     def finish_pending_action(self, action_id: UUID, succeeded: bool) -> None:
         now = self._now()
@@ -464,6 +549,14 @@ class RunRepository:
             status=row["status"],
             approved_at=datetime.fromisoformat(row["approved_at"]) if row["approved_at"] else None,
             claimed_at=datetime.fromisoformat(row["claimed_at"]) if row["claimed_at"] else None,
+            worker_id=row["worker_id"],
+            lease_expires_at=(
+                datetime.fromisoformat(row["lease_expires_at"]) if row["lease_expires_at"] else None
+            ),
+            recovered_at=(
+                datetime.fromisoformat(row["recovered_at"]) if row["recovered_at"] else None
+            ),
+            recovery_reason=row["recovery_reason"],
             executed_at=datetime.fromisoformat(row["executed_at"]) if row["executed_at"] else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),

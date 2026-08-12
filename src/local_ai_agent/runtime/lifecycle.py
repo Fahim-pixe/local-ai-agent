@@ -153,6 +153,37 @@ class RunLifecycleService:
             {"tool_name": pending["tool_name"]},
         )
 
+    def recover_stale_executing_actions(
+        self,
+        *,
+        now: Any = None,
+        lease_seconds: int = 300,
+        reason: str = "WORKER_CRASH_RECOVERY",
+    ) -> list[Any]:
+        """Fail abandoned worker claims and emit an authoritative recovery audit event."""
+        recovered = self._repository.recover_stale_executing_actions(
+            now=now, lease_seconds=lease_seconds, reason=reason
+        )
+        for action in recovered:
+            run = self._repository.get_run(action.run_id)
+            if run is None:
+                continue
+            self._record_event(
+                run,
+                "continuation.action_recovered",
+                "An expired worker lease was recovered without re-executing the action.",
+                {
+                    "action_id": str(action.id),
+                    "tool_name": action.tool_name,
+                    "worker_id": action.worker_id,
+                    "lease_expires_at": action.lease_expires_at.isoformat()
+                    if action.lease_expires_at
+                    else None,
+                    "recovery_reason": action.recovery_reason,
+                },
+            )
+        return recovered
+
     def require_valid_resume_token(self, run_id: UUID, resume_token: UUID) -> AgentRun:
         """Return the run only when the caller presents its persisted resume token."""
         run = self._require_run(run_id)

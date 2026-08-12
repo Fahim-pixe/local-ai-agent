@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -196,6 +197,61 @@ def test_api_continuation_rejects_runs_without_an_approved_action(tmp_path: Path
     assert "No approved pending action" in resumed.json()["detail"]
 
 
+def test_stale_executing_action_is_failed_once_with_recovery_audit(tmp_path: Path) -> None:
+    repository, lifecycle, run, target, _, runtime = build_checkpointed_runtime(tmp_path)
+    paused = asyncio.run(runtime.run_with_context(system_prompt="Use tools."))
+    assert paused.state is AgentState.AUTHORIZATION_REQUIRED
+    lifecycle.resolve_authorization(run.id, approved=True)
+    claimed_at = datetime(2026, 8, 12, tzinfo=UTC)
+    claimed = repository.claim_approved_action(
+        run.id, worker_id="worker-a", lease_seconds=10, now=claimed_at
+    )
+    assert claimed is not None
+    assert claimed.status == "EXECUTING"
+    assert claimed.worker_id == "worker-a"
+    assert claimed.lease_expires_at == claimed_at + timedelta(seconds=10)
+
+    recovered = lifecycle.recover_stale_executing_actions(
+        now=claimed_at + timedelta(seconds=11), reason="WORKER_CRASH_RECOVERY"
+    )
+
+    assert [action.id for action in recovered] == [claimed.id]
+    assert target.exists()
+    with repository.connect() as connection:
+        row = connection.execute(
+            "SELECT status, recovery_reason FROM pending_actions WHERE id = ?", (str(claimed.id),)
+        ).fetchone()
+    assert row["status"] == "FAILED"
+    assert row["recovery_reason"] == "WORKER_CRASH_RECOVERY"
+    assert "continuation.action_recovered" in [
+        event.type for event in repository.list_events(run.id)
+    ]
+    with pytest.raises(ContinuationError, match="No approved pending action"):
+        asyncio.run(runtime.continuation.resume_approved_action(system_prompt="Use tools."))
+
+
+def test_active_worker_lease_is_not_recovered_before_expiry(tmp_path: Path) -> None:
+    repository, lifecycle, run, _, _, runtime = build_checkpointed_runtime(tmp_path)
+    paused = asyncio.run(runtime.run_with_context(system_prompt="Use tools."))
+    assert paused.state is AgentState.AUTHORIZATION_REQUIRED
+    lifecycle.resolve_authorization(run.id, approved=True)
+    claimed_at = datetime(2026, 8, 12, tzinfo=UTC)
+    claimed = repository.claim_approved_action(
+        run.id, worker_id="worker-a", lease_seconds=10, now=claimed_at
+    )
+    assert claimed is not None
+
+    recovered = lifecycle.recover_stale_executing_actions(
+        now=claimed_at + timedelta(seconds=9), reason="WORKER_CRASH_RECOVERY"
+    )
+
+    assert recovered == []
+    current = repository.get_pending_action(run.id)
+    assert current is not None
+    assert current.status == "EXECUTING"
+    assert current.worker_id == "worker-a"
+
+
 def test_api_resume_token_validates_before_continuing_an_approved_action(tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 
@@ -241,3 +297,22 @@ def test_api_resume_token_validates_before_continuing_an_approved_action(tmp_pat
     assert resumed.json()["action_verified"] is True
     assert resumed.json()["react_state"] == "COMPLETE"
     assert not target.exists()
+
+
+def test_api_exposes_durable_action_history(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from local_ai_agent.api.app import create_app
+
+    settings = configured_settings(tmp_path)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        created = client.post(
+            "/runs",
+            json={"objective": "Inspect action history.", "workspace_id": "api-action-history"},
+        )
+        assert created.status_code == 202
+        actions = client.get(f"/runs/{created.json()['id']}/actions")
+
+    assert actions.status_code == 200
+    assert actions.json() == {"actions": []}

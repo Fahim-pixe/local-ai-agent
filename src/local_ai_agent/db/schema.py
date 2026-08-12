@@ -126,6 +126,10 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     status TEXT NOT NULL,
     approved_at TEXT,
     claimed_at TEXT,
+    worker_id TEXT,
+    lease_expires_at TEXT,
+    recovered_at TEXT,
+    recovery_reason TEXT,
     executed_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -135,10 +139,30 @@ CREATE INDEX IF NOT EXISTS idx_pending_actions_run_status ON pending_actions(run
 """
 
 
+def _ensure_pending_action_recovery_columns(connection: sqlite3.Connection) -> None:
+    """Add worker lease fields when opening a database created by an earlier runtime version."""
+    existing_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(pending_actions)").fetchall()
+    }
+    for name, definition in (
+        ("worker_id", "TEXT"),
+        ("lease_expires_at", "TEXT"),
+        ("recovered_at", "TEXT"),
+        ("recovery_reason", "TEXT"),
+    ):
+        if name not in existing_columns:
+            connection.execute(f"ALTER TABLE pending_actions ADD COLUMN {name} {definition}")
+
+
 def initialize_database(connection: sqlite3.Connection) -> None:
     """Create the schema and rebuild legacy external-content FTS indexes safely."""
     with connection:
         connection.executescript(SCHEMA_SQL)
+        _ensure_pending_action_recovery_columns(connection)
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pending_actions_stale_lease "
+            "ON pending_actions(status, lease_expires_at)"
+        )
         definition = connection.execute(
             "SELECT sql FROM sqlite_master WHERE name = 'memory_fts'"
         ).fetchone()[0]

@@ -66,6 +66,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         ensure_workspace(runtime_settings)
         repository.initialize()
+        app.state.startup_recovered_actions = lifecycle.recover_stale_executing_actions(
+            lease_seconds=runtime_settings.worker_lease_seconds
+        )
         yield
 
     app = FastAPI(
@@ -271,6 +274,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except LifecycleError as error:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
         return {"pending": pending is not None, "tool": pending}
+
+    @app.get("/runs/{run_id}/actions", tags=["runs"])
+    async def list_actions(run_id: UUID, _: None = Depends(require_api_token)) -> dict[str, object]:
+        if repository.get_run(run_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
+        actions = repository.list_pending_actions(run_id)
+        return {
+            "actions": [
+                {
+                    "id": str(action.id),
+                    "tool_name": action.tool_name,
+                    "risk_level": action.risk_level,
+                    "status": action.status,
+                    "worker_id": action.worker_id,
+                    "claimed_at": action.claimed_at,
+                    "lease_expires_at": action.lease_expires_at,
+                    "recovered_at": action.recovered_at,
+                    "recovery_reason": action.recovery_reason,
+                    "executed_at": action.executed_at,
+                }
+                for action in actions
+            ]
+        }
 
     @app.post("/runs/{run_id}/reply", status_code=status.HTTP_202_ACCEPTED, tags=["runs"])
     async def reply_to_run(
