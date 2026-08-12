@@ -167,7 +167,9 @@ def test_react_loop_executes_native_tool_call_and_returns_final_content(tmp_path
     assert client.calls[1]["messages"][-1]["role"] == "tool"
 
 
-def test_react_loop_rejects_ambiguous_model_turn_before_tool_execution(tmp_path: Path) -> None:
+def test_react_loop_discards_tool_accompanying_text_before_native_tool_execution(
+    tmp_path: Path,
+) -> None:
     settings = configured_settings(tmp_path)
     registry, router = configured_router(settings)
     client = FakeNativeToolClient(
@@ -185,16 +187,20 @@ def test_react_loop_rejects_ambiguous_model_turn_before_tool_execution(tmp_path:
                         }
                     ],
                 }
-            }
+            },
+            {"message": {"role": "assistant", "content": "Verified after the tool result."}},
         ]
     )
     loop = ReActLoop(settings=settings, client=client, registry=registry, tool_router=router)
 
     result = asyncio.run(loop.run(objective="List files.", system_prompt="Use tools carefully."))
 
-    assert result.state is AgentState.FAILED
-    assert result.error_code == "MODEL_OUTPUT_INVALID"
-    assert result.tool_outcomes == []
+    assert result.state is AgentState.COMPLETE
+    assert result.final_response == "Verified after the tool result."
+    assert len(result.tool_outcomes) == 1
+    assert result.tool_outcomes[0].result.verified is True
+    assert client.calls[1]["messages"][-1]["role"] == "tool"
+    assert all(message.get("content") != "I completed the task." for message in result.messages)
 
 
 def test_react_loop_stops_at_runtime_budget_without_final_content(tmp_path: Path) -> None:

@@ -103,6 +103,12 @@ class ReActLoop:
                 message = self._validated_message(response)
                 content = message.get("content")
                 tool_calls = message.get("tool_calls") or []
+                if tool_calls and isinstance(content, str) and content.strip():
+                    # Native-tool calls are authoritative for this turn. Qwen3 may emit
+                    # incidental prose with a valid call; do not treat or persist it as
+                    # a final answer before the verified tool result is available.
+                    message = {**message, "content": ""}
+                    content = ""
                 OutputValidator.validate_turn(
                     has_tool_calls=bool(tool_calls),
                     final_content=content if isinstance(content, str) else None,

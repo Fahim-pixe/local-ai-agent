@@ -6,7 +6,7 @@ from uuid import UUID
 
 from local_ai_agent.config import Settings, ensure_workspace
 from local_ai_agent.db.repository import RunRepository
-from local_ai_agent.runtime.lifecycle import RunLifecycleService
+from local_ai_agent.runtime.lifecycle import LifecycleError, RunLifecycleService
 from local_ai_agent.runtime.production_prompt import load_production_prompt
 from local_ai_agent.runtime.secure_run_runtime import build_secure_run_runtime
 from local_ai_agent.schemas.contracts import AgentRun, AgentState, RunBudget
@@ -106,6 +106,7 @@ async def _run_task(settings: Settings, task: CodingTask) -> CodingTaskEvaluatio
             prompt_hash=prompt.sha256,
         )
     )
+    _enter_execution(lifecycle, run.id)
     runtime = build_secure_run_runtime(
         settings=task_settings,
         run_id=run.id,
@@ -113,6 +114,7 @@ async def _run_task(settings: Settings, task: CodingTask) -> CodingTaskEvaluatio
         lifecycle=lifecycle,
     )
     react_result = await runtime.run_with_context()
+    _record_terminal_react_state(lifecycle, run.id, react_result.state, react_result.error_message)
     verified_expected_tool = _verified_tool_call(repository, run.id, task.expected_tool)
     workspace_outcome_verified = _expected_files_match(
         task_settings.workspace_project_path, task.expected_files
@@ -132,8 +134,35 @@ async def _run_task(settings: Settings, task: CodingTask) -> CodingTaskEvaluatio
             state_is_complete=state_is_complete,
             verified_expected_tool=verified_expected_tool,
             workspace_outcome_verified=workspace_outcome_verified,
+            react_error_code=react_result.error_code,
+            react_error_message=react_result.error_message,
         ),
     )
+
+
+def _enter_execution(lifecycle: RunLifecycleService, run_id: UUID) -> None:
+    """Advance a synthetic evaluation run through the same valid path as production work."""
+    lifecycle.transition(run_id, AgentState.VALIDATE, "Evaluation input validated.")
+    lifecycle.transition(run_id, AgentState.PLAN, "Evaluation task planned.")
+    lifecycle.transition(run_id, AgentState.EXECUTE, "Evaluation tool execution started.")
+
+
+def _record_terminal_react_state(
+    lifecycle: RunLifecycleService,
+    run_id: UUID,
+    react_state: AgentState,
+    error_message: str | None,
+) -> None:
+    """Persist a terminal ReAct outcome when no tool route has already changed the run state."""
+    if react_state not in {AgentState.COMPLETE, AgentState.PARTIAL, AgentState.FAILED}:
+        return
+    message = error_message or f"Evaluation ReAct loop reached {react_state.value}."
+    try:
+        lifecycle.transition(run_id, react_state, message)
+    except LifecycleError:
+        # The ReAct executor can already have changed lifecycle state for an
+        # authorization or cancellation boundary. The result remains authoritative.
+        return
 
 
 def _task_settings(settings: Settings, task_name: str) -> Settings:
@@ -177,7 +206,12 @@ def _expected_files_match(project_path: Path, expected_files: dict[str, str]) ->
 
 
 def _failure_reason(
-    *, state_is_complete: bool, verified_expected_tool: bool, workspace_outcome_verified: bool
+    *,
+    state_is_complete: bool,
+    verified_expected_tool: bool,
+    workspace_outcome_verified: bool,
+    react_error_code: str | None,
+    react_error_message: str | None,
 ) -> str:
     failures: list[str] = []
     if not state_is_complete:
@@ -186,4 +220,8 @@ def _failure_reason(
         failures.append("expected tool was not successful and verified")
     if not workspace_outcome_verified:
         failures.append("workspace outcome did not match the task contract")
+    if react_error_code:
+        failures.append(f"model_error={react_error_code}")
+    if react_error_message:
+        failures.append(react_error_message)
     return "; ".join(failures)
