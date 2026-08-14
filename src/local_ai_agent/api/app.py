@@ -110,6 +110,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if events:
             await broker.publish(events[-1])
 
+    def delegation_progress(run_id: UUID) -> dict[str, object]:
+        """Reconstruct bounded delegation status from the durable event stream."""
+        units: dict[str, dict[str, object]] = {}
+        order: list[str] = []
+        for event in repository.list_events(run_id):
+            data = event.data
+            if event.type == "delegation.plan_persisted":
+                for raw_unit in data.get("units", []):
+                    if not isinstance(raw_unit, dict) or not isinstance(raw_unit.get("id"), str):
+                        continue
+                    unit_id = raw_unit["id"]
+                    units[unit_id] = {
+                        "unit": raw_unit,
+                        "status": "PENDING",
+                        "evidence": None,
+                        "detail": None,
+                    }
+                    order.append(unit_id)
+                continue
+            unit_id = data.get("unit_id")
+            if not isinstance(unit_id, str) or unit_id not in units:
+                continue
+            if event.type == "delegation.unit_started":
+                units[unit_id]["status"] = "ACTIVE"
+            elif event.type == "delegation.unit_completed":
+                units[unit_id]["status"] = "COMPLETED"
+                units[unit_id]["detail"] = data.get("summary")
+                units[unit_id]["evidence"] = {
+                    "summary": data.get("summary"),
+                    "verified": data.get("verified") is True,
+                    "verification_strategy": data.get("verification_strategy"),
+                    "evidence": data.get("evidence", {}),
+                }
+            elif event.type == "delegation.unit_failed":
+                units[unit_id]["status"] = "FAILED"
+                units[unit_id]["detail"] = event.message
+        return {
+            "plan_step_mapping": {
+                str(units[unit_id]["unit"]["plan_step_id"]): unit_id for unit_id in order
+            },
+            "units": [units[unit_id] for unit_id in order],
+        }
+
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
         ollama_status: dict[str, object] = {
@@ -161,6 +204,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if run is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
         return run
+
+    @app.get("/runs/{run_id}/delegation", tags=["runs"])
+    async def get_delegation_progress(
+        run_id: UUID, _: None = Depends(require_api_token)
+    ) -> dict[str, object]:
+        if repository.get_run(run_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
+        return delegation_progress(run_id)
 
     @app.get("/runs/{run_id}/events", tags=["runs"])
     async def stream_events(

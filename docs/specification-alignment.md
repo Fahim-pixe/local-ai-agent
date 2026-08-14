@@ -1,6 +1,6 @@
 # Specification Alignment
 
-This repository maps the supplied **Local AI Agent Architecture Specification v2.0** into a contract-first local runtime. It now includes the initial autonomous read path and the Priority 3 persistence, transaction, authorization, and sandbox boundaries required before broader tool expansion.
+This repository maps the supplied **Local AI Agent Architecture Specification v2.0** into a contract-first local runtime. It now includes the autonomous read path, persistence, transaction, authorization, sandbox boundaries, durable local dispatch, and bounded coordinator-to-specialist delegation required before broader tool expansion.
 
 ## Core requirements mapped to the repository
 
@@ -13,6 +13,7 @@ This repository maps the supplied **Local AI Agent Architecture Specification v2
 | State machine with valid transitions | `runtime/state_machine.py` | Implemented |
 | Output validator ahead of runtime actions | `runtime/output_validator.py` | Implemented |
 | PlanTracker with dependency-safe status progression | `runtime/plan_tracker.py` | Implemented |
+| Bounded coordinator-to-specialist delegation | `runtime/delegation.py`, `DelegationUnit`, `SpecialistEvidence`, and `GET /runs/{id}/delegation` | Implemented with plan persistence before execution, frozen coordinator-issued authority, dependency-ready unit admission, no autonomous specialist retry, durable audit events, and verified summary-only evidence. Raw tool output is contractually excluded from specialist evidence and subsequent model context. |
 | Minimal native-Ollama ReAct loop with low-risk filesystem reads | `runtime/react_loop.py`, `runtime/minimal_runtime.py`, and `tools/filesystem.py` | Implemented and unit-tested |
 | Permission gating, budget enforcement, retries, loop blocking, and operation-aware verification | `runtime/permission_gate.py`, `budget_manager.py`, `retry_engine.py`, `loop_detector.py`, `verification_engine.py`, and `tool_router.py` | Implemented and unit-tested |
 | SQLite source of truth for runs, tools, results, events, memory, backups | `db/schema.py` and `db/repository.py` | Implemented for runs, events, tool audit, backups, cancellation, authorization, and session locks |
@@ -30,7 +31,7 @@ This repository maps the supplied **Local AI Agent Architecture Specification v2
 | API lifecycle + SSE | `api/app.py` | Implemented with durable creation, cancellation, authorization, replies, listing, historical events, live SSE notifications, approved-action continuation, token-validated `POST /runs/{id}/resume`, startup stale-claim recovery, and `GET /runs/{id}/actions` lease/recovery observability |
 | Versioned production prompt and SHA-256 provenance | `config/agent.toml`, `config/system_prompt.md`, `runtime/production_prompt.py`, `Settings`, and `agent_runs.prompt_hash` | Implemented; TOML-backed name and mission render into the UTF-8 prompt before its exact message bytes are hashed and persisted for every API-created run |
 | Opt-in end-to-end local coding evaluation | `evaluation/coding_tasks.py`, `tests/test_coding_evaluation.py`, and `make test-ollama` | Implemented for list, read, and write scenarios; it grades durable verified tool evidence and deterministic workspace outcomes when `RUN_OLLAMA_EVALUATION=1` |
-| Environment-controlled paths, models, budgets, limits | `config/agent.toml` and `.env.example` | Ready |
+| Environment-controlled paths, models, budgets, limits | `config/agent.toml` and `.env.example` | Implemented, including `DELEGATION_*` caps for coordinator-owned unit count, tool calls, model turns, and zero specialist retries. |
 | Contract, boundary, and persistence tests | `tests/test_foundation.py` | Ready |
 
 ## Workspace model
@@ -58,4 +59,4 @@ The initial commit does not pretend to implement the full autonomous runtime. Th
 
 ## Immediate next development milestone
 
-The next milestone should baseline configuration-gated local dispatch under native Ubuntu Docker and real-Ollama validation, then consider sampled lease metrics and a narrowly reviewed verifier-backed idempotency pilot. The opt-in Phase 6 local-model corpus should be run and baselined on target hardware before expanding the tool surface. Priority 4 uses local FTS5 as the semantic retrieval baseline; embeddings should remain a separately evaluated enhancement.
+The next milestone should bind the completed bounded coordinator contract to an explicitly reviewed specialist runner while preserving runtime-owned tool routing, immutable authority, verified-summary evidence, and zero autonomous retries. In parallel, baseline configuration-gated local dispatch under native Ubuntu Docker and real-Ollama validation, then consider sampled lease metrics and a narrowly reviewed verifier-backed idempotency pilot. The opt-in Phase 6 local-model corpus should be run and baselined on target hardware before expanding the tool surface. Priority 4 uses local FTS5 as the semantic retrieval baseline; embeddings should remain a separately evaluated enhancement.

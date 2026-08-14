@@ -127,6 +127,31 @@ class AgentPlan(BaseModel):
     rollback_strategy: str = Field(min_length=1, max_length=4_000)
 
 
+class DelegationUnit(BaseModel):
+    """A coordinator-owned specialist assignment bounded to one persisted plan step."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=128)
+    plan_step_id: int = Field(ge=1)
+    objective: str = Field(min_length=1, max_length=2_000)
+    allowed_tool_names: tuple[str, ...] = Field(default_factory=tuple)
+    max_tool_calls: int = Field(ge=0)
+    max_model_turns: int = Field(ge=1)
+    depends_on: tuple[str, ...] = Field(default_factory=tuple)
+
+
+class SpecialistEvidence(BaseModel):
+    """Compact verified evidence accepted from a specialist; raw tool output is prohibited."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(min_length=1, max_length=2_000)
+    verified: bool
+    verification_strategy: str = Field(min_length=1, max_length=256)
+    evidence: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+
+
 class RunBudget(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -2,7 +2,7 @@
 
 A **contract-first, local-first** autonomous agent runtime. The local model decides what to do; the Python runtime validates whether it is allowed; tools run only through runtime policy; SQLite records the authoritative state.
 
-> **Current status:** The contract-first runtime now includes a versioned production system prompt, SHA-256 prompt provenance on each API-created run, native Ollama tool calls, checkpointed ReAct continuation, verified memory/context assembly, transactional workspace mutation, and sandboxed execution. An opt-in local Qwen3 coding corpus validates the complete path when Ollama is available.
+> **Current status:** The contract-first runtime now includes a versioned production system prompt, SHA-256 prompt provenance on each API-created run, native Ollama tool calls, checkpointed ReAct continuation, verified memory/context assembly, transactional workspace mutation, sandboxed execution, and bounded coordinator-to-specialist delegation. An opt-in local Qwen3 coding corpus validates the complete path when Ollama is available.
 
 ## Architecture
 
@@ -23,6 +23,7 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Runtime state authority | `runtime/state_machine.py` enforces documented valid transitions. |
 | Model-output validation | `runtime/output_validator.py` rejects malformed plans and ambiguous tool-plus-answer turns. |
 | Plan and execution controls | `PlanTracker` owns dependency-safe plan steps; `ToolRouter` applies runtime argument validation, authorization, budgets, loop detection, handler execution, operation-aware verification, and retry decisions in fixed order. |
+| Bounded coordinator delegation | `DelegationCoordinator` persists an explicit `AgentPlan`, admits only dependency-ready specialist units, and accepts only compact, independently verified `SpecialistEvidence`. Specialists receive frozen `DelegationAuthority`, so they cannot add tools, widen permissions, increase budgets, or alter retry policy. |
 | Minimal ReAct capability | `ReActLoop` uses Ollama native tool calls and returns only verified results from `filesystem.list_directory` and `filesystem.read_file` inside `workspace/project/`. |
 | Local model boundary | `runtime/ollama_client.py` uses native Ollama `tools` payloads and explicit local failure types. |
 | SQLite source of truth | `db/schema.py` creates runs, tool call/result, memory, event, backup, and FTS5 tables. |
@@ -106,10 +107,11 @@ Versioned defaults belong in `config/agent.toml`. Secrets and environment-specif
 | `RAG_*`, `CONTEXT_CHARS_PER_TOKEN` | FTS retrieval count and token-estimation/truncation controls for assembled runtime context. |
 | `WORKER_LEASE_SECONDS`, `WORKER_HEARTBEAT_SECONDS` | Lease expiry and renewal interval for executing approved actions; stale claims are safely recovered as failures at startup. |
 | `DISPATCH_*` | Disabled-by-default bounded local worker count, polling, recovery sweep, worker staleness, and attempt-cap policy. `DISPATCH_MAX_ATTEMPTS` remains `1` until a separately reviewed idempotency pilot. |
+| `DELEGATION_*` | Coordinator-owned caps for specialist unit count, per-unit tool calls, model turns, and retries. `DELEGATION_MAX_RETRIES` remains `0`; specialist units fail closed rather than retrying autonomously. |
 | `DOCKER_SANDBOX_*` | Mandatory resource, user, filesystem, and network restrictions for sandboxed high-risk tools. |
 | `AGENT_API_TOKEN` | Bearer token for run lifecycle endpoints. |
 
-The repository deliberately keeps security decisions in the runtime layer. Shell and Python execution require explicit authorization, command policy approval, the Docker process boundary, output redaction, independent verification, and durable audit records. Workspace writes are snapshot-backed and only commit after post-operation verification.
+The repository deliberately keeps security decisions in the runtime layer. Shell and Python execution require explicit authorization, command policy approval, the Docker process boundary, output redaction, independent verification, and durable audit records. Workspace writes are snapshot-backed and only commit after post-operation verification. Coordinator delegation follows the same boundary: the coordinator fixes a specialist unit’s allowed tools, tool-call cap, model-turn cap, and zero-retry policy before execution; raw tool output is excluded from later model context, and only compact verified evidence summaries are retained.
 
 ## API lifecycle scaffold
 
@@ -118,6 +120,7 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 | `GET` | `/health` | Checks SQLite, workspace, and local Ollama model readiness. |
 | `POST` | `/runs` | Persists a new run, acquires its workspace lock, and emits a durable creation event. |
 | `GET` | `/runs/{run_id}` | Retrieves persisted run metadata. |
+| `GET` | `/runs/{run_id}/delegation` | Returns the durable coordinator plan-step mapping, current unit states, and verified evidence summaries only. |
 | `GET` | `/runs/{run_id}/events` | Streams durable historical events followed by live SSE notifications. |
 | `POST` | `/runs/{run_id}/cancel` | Persists cancellation for the execution boundary to honor before the next tool. |
 | `POST` | `/runs/{run_id}/authorize` | Resolves an explicit pending authorization and marks its checkpoint-linked action approved or rejected. |
@@ -135,9 +138,10 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 
 The next commits should follow the specification's trust-first order:
 
-1. Baseline configuration-gated local dispatch under native Ubuntu, then add sampled lease metrics and consider a narrowly reviewed verifier-backed idempotency pilot; no high-risk tool may be automatically re-executed.
-2. Run and baseline the opt-in local Qwen3 coding corpus on target hardware before expanding its task set.
-3. Extend semantic memory with local embeddings only after evaluating the FTS5 baseline and preserving the current confidence/staleness model.
-4. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, verification, recovery classification, and audit coverage.
+1. Bind the bounded coordinator to an explicitly reviewed specialist runner only after preserving the current immutable-authority, verified-summary, and zero-retry contract; no specialist may issue direct tool calls outside the runtime router.
+2. Baseline configuration-gated local dispatch under native Ubuntu, then add sampled lease metrics and consider a narrowly reviewed verifier-backed idempotency pilot; no high-risk tool may be automatically re-executed.
+3. Run and baseline the opt-in local Qwen3 coding corpus on target hardware before expanding its task set.
+4. Extend semantic memory with local embeddings only after evaluating the FTS5 baseline and preserving the current confidence/staleness model.
+5. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, verification, recovery classification, and audit coverage.
 
 See [`docs/specification-alignment.md`](docs/specification-alignment.md) for the setup-to-specification mapping.

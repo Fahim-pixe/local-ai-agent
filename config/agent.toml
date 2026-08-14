@@ -26,6 +26,12 @@ recovery_sweep_seconds = 30
 max_dispatch_attempts = 1
 heartbeat_event_sample_seconds = 30
 
+[delegation]
+max_units = 5
+max_unit_tool_calls = 3
+max_unit_model_turns = 3
+max_retries = 0
+
 [workspace]
 root = "./workspace"
 project_directory = "project"

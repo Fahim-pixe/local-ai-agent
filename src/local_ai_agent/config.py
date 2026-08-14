@@ -76,6 +76,10 @@ class Settings:
     dispatch_recovery_sweep_seconds: int
     dispatch_max_attempts: int
     dispatch_heartbeat_event_sample_seconds: int
+    delegation_max_units: int
+    delegation_max_unit_tool_calls: int
+    delegation_max_unit_model_turns: int
+    delegation_max_retries: int
     default_max_tool_calls: int
     default_max_runtime_seconds: int
     default_max_shell_executions: int
@@ -140,6 +144,7 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
     agent = raw["agent"]
     worker = raw["worker"]
     dispatch = raw["dispatch"]
+    delegation = raw["delegation"]
 
     project_root = PROJECT_ROOT
     workspace_root = _env_path("WORKSPACE_ROOT", project_root / workspace["root"])
@@ -178,6 +183,14 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
             "DISPATCH_HEARTBEAT_EVENT_SAMPLE_SECONDS",
             dispatch["heartbeat_event_sample_seconds"],
         ),
+        delegation_max_units=_env_int("DELEGATION_MAX_UNITS", delegation["max_units"]),
+        delegation_max_unit_tool_calls=_env_int(
+            "DELEGATION_MAX_UNIT_TOOL_CALLS", delegation["max_unit_tool_calls"]
+        ),
+        delegation_max_unit_model_turns=_env_int(
+            "DELEGATION_MAX_UNIT_MODEL_TURNS", delegation["max_unit_model_turns"]
+        ),
+        delegation_max_retries=_env_int("DELEGATION_MAX_RETRIES", delegation["max_retries"]),
         default_max_tool_calls=_env_int("DEFAULT_MAX_TOOL_CALLS", limits["default_max_tool_calls"]),
         default_max_runtime_seconds=_env_int(
             "DEFAULT_MAX_RUNTIME_SECONDS", limits["default_max_runtime_seconds"]
@@ -238,6 +251,16 @@ def _validate_dispatch_settings(settings: Settings) -> None:
     if settings.dispatch_max_attempts != 1:
         raise ValueError(
             "DISPATCH_MAX_ATTEMPTS must remain 1 until a reviewed idempotency pilot is enabled."
+        )
+    if settings.delegation_max_units < 1:
+        raise ValueError("DELEGATION_MAX_UNITS must be at least one.")
+    if settings.delegation_max_unit_tool_calls < 0:
+        raise ValueError("DELEGATION_MAX_UNIT_TOOL_CALLS cannot be negative.")
+    if settings.delegation_max_unit_model_turns < 1:
+        raise ValueError("DELEGATION_MAX_UNIT_MODEL_TURNS must be at least one.")
+    if settings.delegation_max_retries != 0:
+        raise ValueError(
+            "DELEGATION_MAX_RETRIES must remain 0; specialists never retry autonomously."
         )
 
 
