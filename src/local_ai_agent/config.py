@@ -80,6 +80,11 @@ class Settings:
     delegation_max_unit_tool_calls: int
     delegation_max_unit_model_turns: int
     delegation_max_retries: int
+    retrieval_benchmark_top_k: int
+    retrieval_benchmark_min_precision_at_k: float
+    retrieval_benchmark_min_recall_at_k: float
+    retrieval_benchmark_max_mean_latency_ms: float
+    retrieval_benchmark_max_peak_memory_bytes: int
     default_max_tool_calls: int
     default_max_runtime_seconds: int
     default_max_shell_executions: int
@@ -145,6 +150,7 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
     worker = raw["worker"]
     dispatch = raw["dispatch"]
     delegation = raw["delegation"]
+    retrieval_benchmark = raw["retrieval_benchmark"]
 
     project_root = PROJECT_ROOT
     workspace_root = _env_path("WORKSPACE_ROOT", project_root / workspace["root"])
@@ -191,6 +197,25 @@ def load_settings(config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
             "DELEGATION_MAX_UNIT_MODEL_TURNS", delegation["max_unit_model_turns"]
         ),
         delegation_max_retries=_env_int("DELEGATION_MAX_RETRIES", delegation["max_retries"]),
+        retrieval_benchmark_top_k=_env_int(
+            "RETRIEVAL_BENCHMARK_TOP_K", retrieval_benchmark["top_k"]
+        ),
+        retrieval_benchmark_min_precision_at_k=_env_float(
+            "RETRIEVAL_BENCHMARK_MIN_PRECISION_AT_K",
+            retrieval_benchmark["min_precision_at_k"],
+        ),
+        retrieval_benchmark_min_recall_at_k=_env_float(
+            "RETRIEVAL_BENCHMARK_MIN_RECALL_AT_K",
+            retrieval_benchmark["min_recall_at_k"],
+        ),
+        retrieval_benchmark_max_mean_latency_ms=_env_float(
+            "RETRIEVAL_BENCHMARK_MAX_MEAN_LATENCY_MS",
+            retrieval_benchmark["max_mean_latency_ms"],
+        ),
+        retrieval_benchmark_max_peak_memory_bytes=_env_int(
+            "RETRIEVAL_BENCHMARK_MAX_PEAK_MEMORY_BYTES",
+            retrieval_benchmark["max_peak_memory_bytes"],
+        ),
         default_max_tool_calls=_env_int("DEFAULT_MAX_TOOL_CALLS", limits["default_max_tool_calls"]),
         default_max_runtime_seconds=_env_int(
             "DEFAULT_MAX_RUNTIME_SECONDS", limits["default_max_runtime_seconds"]
@@ -262,6 +287,16 @@ def _validate_dispatch_settings(settings: Settings) -> None:
         raise ValueError(
             "DELEGATION_MAX_RETRIES must remain 0; specialists never retry autonomously."
         )
+    if settings.retrieval_benchmark_top_k < 1:
+        raise ValueError("RETRIEVAL_BENCHMARK_TOP_K must be at least one.")
+    if not 0.0 <= settings.retrieval_benchmark_min_precision_at_k <= 1.0:
+        raise ValueError("RETRIEVAL_BENCHMARK_MIN_PRECISION_AT_K must be between 0 and 1.")
+    if not 0.0 <= settings.retrieval_benchmark_min_recall_at_k <= 1.0:
+        raise ValueError("RETRIEVAL_BENCHMARK_MIN_RECALL_AT_K must be between 0 and 1.")
+    if settings.retrieval_benchmark_max_mean_latency_ms <= 0:
+        raise ValueError("RETRIEVAL_BENCHMARK_MAX_MEAN_LATENCY_MS must be positive.")
+    if settings.retrieval_benchmark_max_peak_memory_bytes <= 0:
+        raise ValueError("RETRIEVAL_BENCHMARK_MAX_PEAK_MEMORY_BYTES must be positive.")
 
 
 def ensure_workspace(settings: Settings) -> None:

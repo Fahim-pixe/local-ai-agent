@@ -32,6 +32,13 @@ max_unit_tool_calls = 3
 max_unit_model_turns = 3
 max_retries = 0
 
+[retrieval_benchmark]
+top_k = 3
+min_precision_at_k = 0.90
+min_recall_at_k = 0.90
+max_mean_latency_ms = 250.0
+max_peak_memory_bytes = 10000000
+
 [workspace]
 root = "./workspace"
 project_directory = "project"

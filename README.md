@@ -2,7 +2,7 @@
 
 A **contract-first, local-first** autonomous agent runtime. The local model decides what to do; the Python runtime validates whether it is allowed; tools run only through runtime policy; SQLite records the authoritative state.
 
-> **Current status:** The contract-first runtime now includes a versioned production system prompt, SHA-256 prompt provenance on each API-created run, native Ollama tool calls, checkpointed ReAct continuation, verified memory/context assembly, transactional workspace mutation, sandboxed execution, bounded coordinator-to-specialist delegation, and local aggregate operational metrics. An opt-in local Qwen3 coding corpus validates the complete path when Ollama is available.
+> **Current status:** The contract-first runtime now includes a versioned production system prompt, SHA-256 prompt provenance on each API-created run, native Ollama tool calls, checkpointed ReAct continuation, verified memory/context assembly, transactional workspace mutation, sandboxed execution, bounded coordinator-to-specialist delegation, local aggregate operational metrics, and a reproducible FTS5 retrieval baseline. An opt-in local Qwen3 coding corpus validates the complete path when Ollama is available.
 
 ## Architecture
 
@@ -70,10 +70,13 @@ make lint
 # 5. With Docker running and the sandbox image built, execute the real isolation check.
 RUN_DOCKER_INTEGRATION=1 PYTHONPATH=src .venv/bin/pytest -m docker
 
-# 6. Run the opt-in real local-model coding evaluation after confirming Ollama and qwen3:8b are available.
+# 6. Measure the sanitized local FTS5 retrieval baseline and dense-pilot decision gate.
+make test-retrieval
+
+# 7. Run the opt-in real local-model coding evaluation after confirming Ollama and qwen3:8b are available.
 make test-ollama
 
-# 7. Start the FastAPI control plane.
+# 8. Start the FastAPI control plane.
 make run
 ```
 
@@ -106,6 +109,7 @@ Versioned defaults belong in `config/agent.toml`. Secrets and environment-specif
 | `WORKSPACE_ROOT`, `SQLITE_PATH` | Isolated workspace and authoritative SQLite store. |
 | `DEFAULT_MAX_*` | Runtime budget ceilings for tools, duration, and shell actions. |
 | `RAG_*`, `CONTEXT_CHARS_PER_TOKEN` | FTS retrieval count and token-estimation/truncation controls for assembled runtime context. |
+| `RETRIEVAL_BENCHMARK_*` | Versioned FTS5 baseline top-k, minimum precision/recall, maximum mean latency, and maximum transient-memory limits. A dense-retrieval pilot is considered only when the measured baseline fails one or more of these limits. |
 | `WORKER_LEASE_SECONDS`, `WORKER_HEARTBEAT_SECONDS` | Lease expiry and renewal interval for executing approved actions; stale claims are safely recovered as failures at startup. |
 | `DISPATCH_*` | Disabled-by-default bounded local worker count, polling, recovery sweep, worker staleness, and attempt-cap policy. `DISPATCH_MAX_ATTEMPTS` remains `1` until a separately reviewed idempotency pilot. |
 | `DELEGATION_*` | Coordinator-owned caps for specialist unit count, per-unit tool calls, model turns, and retries. `DELEGATION_MAX_RETRIES` remains `0`; specialist units fail closed rather than retrying autonomously. |
@@ -113,6 +117,8 @@ Versioned defaults belong in `config/agent.toml`. Secrets and environment-specif
 | `AGENT_API_TOKEN` | Bearer token for run lifecycle endpoints. |
 
 The repository deliberately keeps security decisions in the runtime layer. Shell and Python execution require explicit authorization, command policy approval, the Docker process boundary, output redaction, independent verification, and durable audit records. Workspace writes are snapshot-backed and only commit after post-operation verification. Coordinator delegation follows the same boundary: the coordinator fixes a specialist unit’s allowed tools, tool-call cap, model-turn cap, and zero-retry policy before execution; raw tool output is excluded from later model context, and only compact verified evidence summaries are retained.
+
+The retrieval benchmark operates on a checked-in sanitized corpus and executes the same local SQLite FTS5 memory path used by the runtime. It reports aggregate precision@k, recall@k, mean search latency, and transient peak memory, but never prints stored memory values. Its configuration-derived assessment is a decision gate: an optional dense-retrieval pilot is justified only when the FTS5 baseline fails a stated threshold. See the recorded [`FTS5 baseline`](docs/fts5-retrieval-baseline.md) for the current measured outcome.
 
 ## API lifecycle scaffold
 
@@ -140,10 +146,9 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 
 The next commits should follow the specification's trust-first order:
 
-1. Publish and use the local operational metrics baseline, then add a checked-in sanitized FTS5 retrieval benchmark with measurable precision, recall, latency, and memory-footprint outcomes before considering dense retrieval.
+1. Publish and baseline the checked-in sanitized FTS5 retrieval benchmark on target hardware. Consider local dense retrieval only if its configuration-derived quality, latency, or memory gate fails.
 2. Bind the bounded coordinator to an explicitly reviewed specialist runner only after preserving the current immutable-authority, verified-summary, and zero-retry contract; no specialist may issue direct tool calls outside the runtime router.
 3. Baseline configuration-gated local dispatch and the opt-in local Qwen3 coding corpus on target hardware, then consider sampled lease metrics and a narrowly reviewed verifier-backed idempotency pilot; no high-risk tool may be automatically re-executed.
-4. Implement local dense retrieval only if the FTS5 benchmark demonstrates a material gap; preserve SQLite provenance, confidence/staleness semantics, and runtime-owned authorization.
-5. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, verification, recovery classification, and audit coverage.
+4. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, verification, recovery classification, and audit coverage.
 
 See [`docs/specification-alignment.md`](docs/specification-alignment.md) for the setup-to-specification mapping.
