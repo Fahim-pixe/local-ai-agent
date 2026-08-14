@@ -2,7 +2,7 @@
 
 A **contract-first, local-first** autonomous agent runtime. The local model decides what to do; the Python runtime validates whether it is allowed; tools run only through runtime policy; SQLite records the authoritative state.
 
-> **Current status:** The contract-first runtime now includes a versioned production system prompt, SHA-256 prompt provenance on each API-created run, native Ollama tool calls, checkpointed ReAct continuation, verified memory/context assembly, transactional workspace mutation, sandboxed execution, and bounded coordinator-to-specialist delegation. An opt-in local Qwen3 coding corpus validates the complete path when Ollama is available.
+> **Current status:** The contract-first runtime now includes a versioned production system prompt, SHA-256 prompt provenance on each API-created run, native Ollama tool calls, checkpointed ReAct continuation, verified memory/context assembly, transactional workspace mutation, sandboxed execution, bounded coordinator-to-specialist delegation, and local aggregate operational metrics. An opt-in local Qwen3 coding corpus validates the complete path when Ollama is available.
 
 ## Architecture
 
@@ -37,6 +37,7 @@ A **contract-first, local-first** autonomous agent runtime. The local model deci
 | Production prompt provenance | `config/agent.toml` provides agent name and mission, which render into `config/system_prompt.md` before SHA-256 hashing; every API-created run records the exact runtime-owned prompt hash in SQLite. |
 | Durable ReAct continuation and dispatch | Append-only message checkpoints bind high-risk requests to a single pending action. When explicitly enabled, the API supervises a bounded set of independent local worker processes that register, heartbeat, atomically claim, and execute one owned action; all current tools are `NEVER_RECLAIM`, so expired `EXECUTING` work fails safely rather than being re-executed. |
 | API lifecycle | `api/app.py` provides token-gated lifecycle endpoints, durable event history with SSE fanout, cancellation, authorization, replies, run listing, approved-action continuation, and resume-token validation. |
+| Local operational observability | `RunRepository.operational_metrics()` derives typed aggregate metrics directly from SQLite audit records. It reports run states, verified tool success, loop and budget stops, authorization decisions, recovery attempts, and continuation replay counts without exposing objectives, arguments, raw output, or message context. |
 | Sandbox boundary | `runtime/docker_sandbox.py` owns a Docker invocation with no network, read-only root, dropped capabilities, no-new-privileges, resource limits, an unprivileged user, and one validated writable workspace mount. |
 
 ## Prerequisites
@@ -118,6 +119,7 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 | Method | Route | Initial behavior |
 | --- | --- | --- |
 | `GET` | `/health` | Checks SQLite, workspace, and local Ollama model readiness. |
+| `GET` | `/metrics/operational` | Returns token-gated, privacy-safe aggregate run, tool, authorization, recovery, and continuation metrics derived from the durable SQLite audit store. |
 | `POST` | `/runs` | Persists a new run, acquires its workspace lock, and emits a durable creation event. |
 | `GET` | `/runs/{run_id}` | Retrieves persisted run metadata. |
 | `GET` | `/runs/{run_id}/delegation` | Returns the durable coordinator plan-step mapping, current unit states, and verified evidence summaries only. |
@@ -138,10 +140,10 @@ The repository deliberately keeps security decisions in the runtime layer. Shell
 
 The next commits should follow the specification's trust-first order:
 
-1. Bind the bounded coordinator to an explicitly reviewed specialist runner only after preserving the current immutable-authority, verified-summary, and zero-retry contract; no specialist may issue direct tool calls outside the runtime router.
-2. Baseline configuration-gated local dispatch under native Ubuntu, then add sampled lease metrics and consider a narrowly reviewed verifier-backed idempotency pilot; no high-risk tool may be automatically re-executed.
-3. Run and baseline the opt-in local Qwen3 coding corpus on target hardware before expanding its task set.
-4. Extend semantic memory with local embeddings only after evaluating the FTS5 baseline and preserving the current confidence/staleness model.
+1. Publish and use the local operational metrics baseline, then add a checked-in sanitized FTS5 retrieval benchmark with measurable precision, recall, latency, and memory-footprint outcomes before considering dense retrieval.
+2. Bind the bounded coordinator to an explicitly reviewed specialist runner only after preserving the current immutable-authority, verified-summary, and zero-retry contract; no specialist may issue direct tool calls outside the runtime router.
+3. Baseline configuration-gated local dispatch and the opt-in local Qwen3 coding corpus on target hardware, then consider sampled lease metrics and a narrowly reviewed verifier-backed idempotency pilot; no high-risk tool may be automatically re-executed.
+4. Implement local dense retrieval only if the FTS5 benchmark demonstrates a material gap; preserve SQLite provenance, confidence/staleness semantics, and runtime-owned authorization.
 5. Extend secure tools only when each new operation has path policy, transaction semantics where applicable, verification, recovery classification, and audit coverage.
 
 See [`docs/specification-alignment.md`](docs/specification-alignment.md) for the setup-to-specification mapping.

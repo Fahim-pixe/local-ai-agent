@@ -17,6 +17,7 @@ from local_ai_agent.schemas.contracts import (
     AgentPlan,
     AgentRun,
     AgentState,
+    OperationalMetrics,
     RecoveryClass,
     ToolResult,
 )
@@ -180,6 +181,68 @@ class RunRepository:
                     (state.value, plan.model_dump_json(), now, completed_at, str(run_id)),
                 )
         return self.get_run(run_id) if cursor.rowcount else None
+
+    def operational_metrics(self) -> OperationalMetrics:
+        """Return privacy-safe aggregates from the authoritative local audit store."""
+        with self.connect() as connection:
+            state_rows = connection.execute(
+                "SELECT state, COUNT(*) AS count FROM agent_runs GROUP BY state ORDER BY state"
+            ).fetchall()
+            tool_rows = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS result_count,
+                    COALESCE(SUM(CASE WHEN success = 1 AND verified = 1 THEN 1 ELSE 0 END), 0)
+                        AS verified_successes,
+                    COALESCE(SUM(CASE WHEN error_code = 'LOOP_DETECTED' THEN 1 ELSE 0 END), 0)
+                        AS loop_stops,
+                    COALESCE(SUM(CASE WHEN error_code LIKE 'MAX_%' THEN 1 ELSE 0 END), 0)
+                        AS budget_stops
+                FROM tool_results
+                """
+            ).fetchone()
+            action_rows = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM(CASE WHEN approved_at IS NOT NULL THEN 1 ELSE 0 END), 0)
+                        AS approved_count,
+                    COALESCE(SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END), 0)
+                        AS denied_count,
+                    COALESCE(SUM(CASE WHEN status = 'EXECUTED' THEN 1 ELSE 0 END), 0)
+                        AS executed_count
+                FROM pending_actions
+                """
+            ).fetchone()
+            runs_total = int(connection.execute("SELECT COUNT(*) FROM agent_runs").fetchone()[0])
+            tool_calls_total = int(
+                connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
+            )
+            action_recoveries = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM action_attempts WHERE status = 'RECOVERED'"
+                ).fetchone()[0]
+            )
+            continuations_replayed = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM agent_events WHERE event_type = 'continuation.replayed'"
+                ).fetchone()[0]
+            )
+        return OperationalMetrics(
+            runs_total=runs_total,
+            runs_by_state={str(row["state"]): int(row["count"]) for row in state_rows},
+            tool_calls_total=tool_calls_total,
+            tool_results_total=int(tool_rows["result_count"]),
+            verified_tool_successes=int(tool_rows["verified_successes"]),
+            loop_stops=int(tool_rows["loop_stops"]),
+            budget_stops=int(tool_rows["budget_stops"]),
+            authorization_requests=int(action_rows["request_count"]),
+            authorization_approved=int(action_rows["approved_count"]),
+            authorization_denied=int(action_rows["denied_count"]),
+            authorization_executed=int(action_rows["executed_count"]),
+            action_recoveries=action_recoveries,
+            continuations_replayed=continuations_replayed,
+        )
 
     def record_event(self, event: AgentEvent) -> None:
         with self.connect() as connection:

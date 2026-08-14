@@ -204,6 +204,26 @@ class AgentRun(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class OperationalMetrics(BaseModel):
+    """Privacy-safe aggregates derived from the authoritative local runtime audit store."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    runs_total: int = Field(ge=0)
+    runs_by_state: dict[str, int] = Field(default_factory=dict)
+    tool_calls_total: int = Field(ge=0)
+    tool_results_total: int = Field(ge=0)
+    verified_tool_successes: int = Field(ge=0)
+    loop_stops: int = Field(ge=0)
+    budget_stops: int = Field(ge=0)
+    authorization_requests: int = Field(ge=0)
+    authorization_approved: int = Field(ge=0)
+    authorization_denied: int = Field(ge=0)
+    authorization_executed: int = Field(ge=0)
+    action_recoveries: int = Field(ge=0)
+    continuations_replayed: int = Field(ge=0)
+
+
 class AgentEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

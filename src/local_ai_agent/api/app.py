@@ -25,6 +25,7 @@ from local_ai_agent.schemas.contracts import (
     AgentRun,
     AuthorizationDecision,
     CreateRunRequest,
+    OperationalMetrics,
     ResumeRunRequest,
     RunBudget,
     UserReplyRequest,
@@ -173,6 +174,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "workspace": runtime_settings.workspace_project_path.is_dir(),
             "ollama": ollama_status,
         }
+
+    @app.get("/metrics/operational", response_model=OperationalMetrics, tags=["metrics"])
+    async def get_operational_metrics(
+        _: None = Depends(require_api_token),
+    ) -> OperationalMetrics:
+        return repository.operational_metrics()
 
     @app.post("/runs", response_model=AgentRun, status_code=status.HTTP_202_ACCEPTED, tags=["runs"])
     async def create_run(
